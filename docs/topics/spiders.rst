@@ -75,7 +75,8 @@ scrapy.Spider
        An optional list of strings containing domains that this spider is
        allowed to crawl. Requests for URLs not belonging to the domain names
        specified in this list (or their subdomains) won't be followed if
-       :class:`~scrapy.spidermiddlewares.offsite.OffsiteMiddleware` is enabled.
+       :class:`~scrapy.downloadermiddlewares.offsite.OffsiteMiddleware` is
+       enabled.
 
        Let's say your target url is ``https://www.example.com/1.html``,
        then add ``'example.com'`` to the list.
@@ -136,6 +137,21 @@ scrapy.Spider
        attributes in the new instance so they can be accessed later inside the
        spider's code.
 
+       .. versionchanged:: 2.11
+
+           The settings in ``crawler.settings`` can now be modified in this
+           method, which is handy if you want to modify them based on
+           arguments. As a consequence, these settings aren't the final values
+           as they can be modified later by e.g. :ref:`add-ons
+           <topics-addons>`. For the same reason, most of the
+           :class:`~scrapy.crawler.Crawler` attributes aren't initialized at
+           this point.
+
+           The final settings and the initialized
+           :class:`~scrapy.crawler.Crawler` attributes are available in the
+           :meth:`start_requests` method, handlers of the
+           :signal:`engine_started` signal and later.
+
        :param crawler: crawler to which the spider will be bound
        :type crawler: :class:`~scrapy.crawler.Crawler` instance
 
@@ -145,9 +161,50 @@ scrapy.Spider
        :param kwargs: keyword arguments passed to the :meth:`__init__` method
        :type kwargs: dict
 
+   .. classmethod:: update_settings(settings)
+
+       The ``update_settings()`` method is used to modify the spider's settings
+       and is called during initialization of a spider instance.
+
+       It takes a :class:`~scrapy.settings.Settings` object as a parameter and
+       can add or update the spider's configuration values. This method is a
+       class method, meaning that it is called on the :class:`~scrapy.Spider`
+       class and allows all instances of the spider to share the same
+       configuration.
+
+       While per-spider settings can be set in
+       :attr:`~scrapy.Spider.custom_settings`, using ``update_settings()``
+       allows you to dynamically add, remove or change settings based on other
+       settings, spider attributes or other factors and use setting priorities
+       other than ``'spider'``. Also, it's easy to extend ``update_settings()``
+       in a subclass by overriding it, while doing the same with
+       :attr:`~scrapy.Spider.custom_settings` can be hard.
+
+       For example, suppose a spider needs to modify :setting:`FEEDS`:
+
+       .. code-block:: python
+
+           import scrapy
+
+
+           class MySpider(scrapy.Spider):
+               name = "myspider"
+               custom_feed = {
+                   "/home/user/documents/items.json": {
+                       "format": "json",
+                       "indent": 4,
+                   }
+               }
+
+               @classmethod
+               def update_settings(cls, settings):
+                   super().update_settings(settings)
+                   settings.setdefault("FEEDS", {}).update(cls.custom_feed)
+
    .. method:: start_requests()
 
-       This method must return an iterable with the first Requests to crawl for
+       This method must return an iterable with the first Requests to crawl and/or with :ref:`item objects
+       <topics-items>` for
        this spider. It is called by Scrapy when the spider is opened for
        scraping. Scrapy calls it only once, so it is safe to implement
        :meth:`start_requests` as a generator.

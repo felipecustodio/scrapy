@@ -7,48 +7,43 @@ RETRY_TIMES - how many times to retry a failed page
 RETRY_HTTP_CODES - which HTTP response codes to retry
 
 Failed pages are collected on the scraping process and rescheduled at the end,
-once the spider has finished crawling all regular (non failed) pages.
+once the spider has finished crawling all regular (non-failed) pages.
 """
-import warnings
-from logging import Logger, getLogger
-from typing import Optional, Union
 
-from scrapy.exceptions import NotConfigured, ScrapyDeprecationWarning
-from scrapy.http.request import Request
-from scrapy.settings import Settings
-from scrapy.spiders import Spider
+from __future__ import annotations
+
+from logging import Logger, getLogger
+from typing import TYPE_CHECKING
+
+from scrapy.exceptions import NotConfigured
 from scrapy.utils.misc import load_object
 from scrapy.utils.python import global_object_name
 from scrapy.utils.response import response_status_message
 
+if TYPE_CHECKING:
+    # typing.Self requires Python 3.11
+    from typing_extensions import Self
+
+    from scrapy.crawler import Crawler
+    from scrapy.http import Response
+    from scrapy.http.request import Request
+    from scrapy.settings import BaseSettings
+    from scrapy.spiders import Spider
+
+
 retry_logger = getLogger(__name__)
-
-
-class BackwardsCompatibilityMetaclass(type):
-    @property
-    def EXCEPTIONS_TO_RETRY(cls):
-        warnings.warn(
-            "Attribute RetryMiddleware.EXCEPTIONS_TO_RETRY is deprecated. "
-            "Use the RETRY_EXCEPTIONS setting instead.",
-            ScrapyDeprecationWarning,
-            stacklevel=2,
-        )
-        return tuple(
-            load_object(x) if isinstance(x, str) else x
-            for x in Settings().getlist("RETRY_EXCEPTIONS")
-        )
 
 
 def get_retry_request(
     request: Request,
     *,
     spider: Spider,
-    reason: Union[str, Exception] = "unspecified",
-    max_retry_times: Optional[int] = None,
-    priority_adjust: Optional[int] = None,
+    reason: str | Exception | type[Exception] = "unspecified",
+    max_retry_times: int | None = None,
+    priority_adjust: int | None = None,
     logger: Logger = retry_logger,
     stats_base_key: str = "retry",
-):
+) -> Request | None:
     """
     Returns a new :class:`~scrapy.Request` object to retry the specified
     request, or ``None`` if retries of the specified request have been
@@ -90,6 +85,7 @@ def get_retry_request(
     retry-related job stats
     """
     settings = spider.crawler.settings
+    assert spider.crawler.stats
     stats = spider.crawler.stats
     retry_times = request.meta.get("retry_times", 0) + 1
     if max_retry_times is None:
@@ -119,38 +115,32 @@ def get_retry_request(
         return new_request
     stats.inc_value(f"{stats_base_key}/max_reached")
     logger.error(
-        "Gave up retrying %(request)s (failed %(retry_times)d times): " "%(reason)s",
+        "Gave up retrying %(request)s (failed %(retry_times)d times): %(reason)s",
         {"request": request, "retry_times": retry_times, "reason": reason},
         extra={"spider": spider},
     )
     return None
 
 
-class RetryMiddleware(metaclass=BackwardsCompatibilityMetaclass):
-    def __init__(self, settings):
+class RetryMiddleware:
+    def __init__(self, settings: BaseSettings):
         if not settings.getbool("RETRY_ENABLED"):
             raise NotConfigured
         self.max_retry_times = settings.getint("RETRY_TIMES")
-        self.retry_http_codes = set(
-            int(x) for x in settings.getlist("RETRY_HTTP_CODES")
-        )
+        self.retry_http_codes = {int(x) for x in settings.getlist("RETRY_HTTP_CODES")}
         self.priority_adjust = settings.getint("RETRY_PRIORITY_ADJUST")
-
-        if not hasattr(
-            self, "EXCEPTIONS_TO_RETRY"
-        ):  # If EXCEPTIONS_TO_RETRY is not "overriden"
-            self.exceptions_to_retry = tuple(
-                load_object(x) if isinstance(x, str) else x
-                for x in settings.getlist("RETRY_EXCEPTIONS")
-            )
-        else:
-            self.exceptions_to_retry = self.EXCEPTIONS_TO_RETRY
+        self.exceptions_to_retry = tuple(
+            load_object(x) if isinstance(x, str) else x
+            for x in settings.getlist("RETRY_EXCEPTIONS")
+        )
 
     @classmethod
-    def from_crawler(cls, crawler):
+    def from_crawler(cls, crawler: Crawler) -> Self:
         return cls(crawler.settings)
 
-    def process_response(self, request, response, spider):
+    def process_response(
+        self, request: Request, response: Response, spider: Spider
+    ) -> Request | Response:
         if request.meta.get("dont_retry", False):
             return response
         if response.status in self.retry_http_codes:
@@ -158,13 +148,21 @@ class RetryMiddleware(metaclass=BackwardsCompatibilityMetaclass):
             return self._retry(request, reason, spider) or response
         return response
 
-    def process_exception(self, request, exception, spider):
+    def process_exception(
+        self, request: Request, exception: Exception, spider: Spider
+    ) -> Request | Response | None:
         if isinstance(exception, self.exceptions_to_retry) and not request.meta.get(
             "dont_retry", False
         ):
             return self._retry(request, exception, spider)
+        return None
 
-    def _retry(self, request, reason, spider):
+    def _retry(
+        self,
+        request: Request,
+        reason: str | Exception | type[Exception],
+        spider: Spider,
+    ) -> Request | None:
         max_retry_times = request.meta.get("max_retry_times", self.max_retry_times)
         priority_adjust = request.meta.get("priority_adjust", self.priority_adjust)
         return get_retry_request(

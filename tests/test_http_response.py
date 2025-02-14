@@ -99,9 +99,9 @@ class BaseResponseTest(unittest.TestCase):
         self.assertEqual(r1.flags, r2.flags)
 
         # make sure headers attribute is shallow copied
-        assert (
-            r1.headers is not r2.headers
-        ), "headers must be a shallow copy, not identical"
+        assert r1.headers is not r2.headers, (
+            "headers must be a shallow copy, not identical"
+        )
         self.assertEqual(r1.headers, r2.headers)
 
     def test_copy_meta(self):
@@ -342,13 +342,11 @@ class BaseResponseTest(unittest.TestCase):
 
     def _links_response(self):
         body = get_testdata("link_extractor", "linkextractor.html")
-        resp = self.response_class("http://example.com/index", body=body)
-        return resp
+        return self.response_class("http://example.com/index", body=body)
 
     def _links_response_no_href(self):
         body = get_testdata("link_extractor", "linkextractor_no_href.html")
-        resp = self.response_class("http://example.com/index", body=body)
-        return resp
+        return self.response_class("http://example.com/index", body=body)
 
 
 class TextResponseTest(BaseResponseTest):
@@ -728,9 +726,7 @@ class TextResponseTest(BaseResponseTest):
         resp1 = self.response_class(
             "http://example.com",
             encoding="utf8",
-            body='<html><body><a href="foo?привет">click me</a></body></html>'.encode(
-                "utf8"
-            ),
+            body='<html><body><a href="foo?привет">click me</a></body></html>'.encode(),
         )
         req = self._assert_followed_url(
             resp1.css("a")[0],
@@ -844,7 +840,7 @@ class TextResponseTest(BaseResponseTest):
             with mock.patch("json.loads") as mock_json:
                 for _ in range(2):
                     json_response.json()
-                mock_json.assert_called_once_with(json_body.decode())
+                mock_json.assert_called_once_with(json_body)
 
 
 class HtmlResponseTest(TextResponseTest):
@@ -964,7 +960,7 @@ class XmlResponseTest(TextResponseTest):
 
 
 class CustomResponse(TextResponse):
-    attributes = TextResponse.attributes + ("foo", "bar")
+    attributes = (*TextResponse.attributes, "foo", "bar")
 
     def __init__(self, *args, **kwargs) -> None:
         self.foo = kwargs.pop("foo", None)

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import unittest
 from ipaddress import IPv4Address
 from socket import gethostbyname
@@ -49,16 +50,20 @@ from tests.spiders import (
     HeadersReceivedErrbackSpider,
     SimpleSpider,
     SingleRequestSpider,
+    StartRequestsGoodAndBadOutput,
+    StartRequestsItemSpider,
 )
 
 
 class CrawlTestCase(TestCase):
-    def setUp(self):
-        self.mockserver = MockServer()
-        self.mockserver.__enter__()
+    @classmethod
+    def setUpClass(cls):
+        cls.mockserver = MockServer()
+        cls.mockserver.__enter__()
 
-    def tearDown(self):
-        self.mockserver.__exit__(None, None, None)
+    @classmethod
+    def tearDownClass(cls):
+        cls.mockserver.__exit__(None, None, None)
 
     @defer.inlineCallbacks
     def test_follow_all(self):
@@ -76,11 +81,11 @@ class CrawlTestCase(TestCase):
 
     @defer.inlineCallbacks
     def _test_delay(self, total, delay, randomize=False):
-        crawl_kwargs = dict(
-            maxlatency=delay * 2,
-            mockserver=self.mockserver,
-            total=total,
-        )
+        crawl_kwargs = {
+            "maxlatency": delay * 2,
+            "mockserver": self.mockserver,
+            "total": total,
+        }
         tolerance = 1 - (0.6 if randomize else 0.2)
 
         settings = {"DOWNLOAD_DELAY": delay, "RANDOMIZE_DOWNLOAD_DELAY": randomize}
@@ -123,7 +128,9 @@ class CrawlTestCase(TestCase):
         self.assertTrue(crawler.spider.t2 == 0)
         self.assertTrue(crawler.spider.t2_err > 0)
         self.assertTrue(crawler.spider.t2_err > crawler.spider.t1)
+
         # server hangs after receiving response headers
+        crawler = get_crawler(DelaySpider, {"DOWNLOAD_TIMEOUT": 0.35})
         yield crawler.crawl(n=0.5, b=1, mockserver=self.mockserver)
         self.assertTrue(crawler.spider.t1 > 0)
         self.assertTrue(crawler.spider.t2 == 0)
@@ -183,6 +190,39 @@ class CrawlTestCase(TestCase):
         self.assertIs(record.exc_info[0], ZeroDivisionError)
 
     @defer.inlineCallbacks
+    def test_start_requests_items(self):
+        with LogCapture("scrapy", level=logging.ERROR) as log:
+            crawler = get_crawler(StartRequestsItemSpider)
+            yield crawler.crawl(mockserver=self.mockserver)
+
+        self.assertEqual(len(log.records), 0)
+
+    @defer.inlineCallbacks
+    def test_start_requests_unsupported_output(self):
+        with LogCapture("scrapy", level=logging.ERROR) as log:
+            crawler = get_crawler(StartRequestsGoodAndBadOutput)
+            yield crawler.crawl(mockserver=self.mockserver)
+
+        self.assertEqual(len(log.records), 2)
+        self.assertEqual(
+            log.records[0].msg,
+            (
+                "Got 'data:,b' among start requests. Only requests and items "
+                "are supported. It will be ignored."
+            ),
+        )
+        self.assertTrue(
+            re.match(
+                (
+                    r"^Got <object object at 0x[0-9a-fA-F]+> among start "
+                    r"requests\. Only requests and items are supported\. It "
+                    r"will be ignored\.$"
+                ),
+                log.records[1].msg,
+            )
+        )
+
+    @defer.inlineCallbacks
     def test_start_requests_laziness(self):
         settings = {"CONCURRENT_REQUESTS": 1}
         crawler = get_crawler(BrokenStartRequestsSpider, settings)
@@ -201,6 +241,7 @@ class CrawlTestCase(TestCase):
         )
         self.assertEqual(crawler.spider.visited, 6)
 
+        crawler = get_crawler(DuplicateStartRequestsSpider, settings)
         yield crawler.crawl(
             dont_filter=False,
             distinct_urls=3,
@@ -389,7 +430,7 @@ with multiples lines
 
     @defer.inlineCallbacks
     def test_crawl_multiple(self):
-        runner = CrawlerRunner({"REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7"})
+        runner = CrawlerRunner()
         runner.crawl(
             SimpleSpider,
             self.mockserver.url("/status?n=200"),
@@ -409,12 +450,14 @@ with multiples lines
 
 
 class CrawlSpiderTestCase(TestCase):
-    def setUp(self):
-        self.mockserver = MockServer()
-        self.mockserver.__enter__()
+    @classmethod
+    def setUpClass(cls):
+        cls.mockserver = MockServer()
+        cls.mockserver.__enter__()
 
-    def tearDown(self):
-        self.mockserver.__exit__(None, None, None)
+    @classmethod
+    def tearDownClass(cls):
+        cls.mockserver.__exit__(None, None, None)
 
     @defer.inlineCallbacks
     def _run_spider(self, spider_cls):

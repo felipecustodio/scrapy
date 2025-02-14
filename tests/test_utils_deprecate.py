@@ -259,12 +259,14 @@ class WarnWhenSubclassedTest(unittest.TestCase):
         self.assertIn("foo.Bar", str(w[1].message))
 
     def test_inspect_stack(self):
-        with mock.patch("inspect.stack", side_effect=IndexError):
-            with warnings.catch_warnings(record=True) as w:
-                DeprecatedName = create_deprecated_class("DeprecatedName", NewName)
+        with (
+            mock.patch("inspect.stack", side_effect=IndexError),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            DeprecatedName = create_deprecated_class("DeprecatedName", NewName)
 
-                class SubClass(DeprecatedName):
-                    pass
+            class SubClass(DeprecatedName):
+                pass
 
         self.assertIn("Error detecting parent module", str(w[0].message))
 
@@ -296,3 +298,7 @@ class UpdateClassPathTest(unittest.TestCase):
             output = update_classpath("scrapy.unmatched.Path")
         self.assertEqual(output, "scrapy.unmatched.Path")
         self.assertEqual(len(w), 0)
+
+    def test_returns_nonstring(self):
+        for notastring in [None, True, [1, 2, 3], object()]:
+            self.assertEqual(update_classpath(notastring), notastring)

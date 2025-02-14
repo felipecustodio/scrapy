@@ -1,7 +1,9 @@
-import collections
+from __future__ import annotations
+
 import shutil
 import tempfile
 import unittest
+from typing import Any, NamedTuple
 
 from twisted.internet import defer
 from twisted.trial.unittest import TestCase
@@ -12,18 +14,24 @@ from scrapy.crawler import Crawler
 from scrapy.http import Request
 from scrapy.spiders import Spider
 from scrapy.utils.httpobj import urlparse_cached
+from scrapy.utils.misc import load_object
 from scrapy.utils.test import get_crawler
 from tests.mockserver import MockServer
 
-MockEngine = collections.namedtuple("MockEngine", ["downloader"])
-MockSlot = collections.namedtuple("MockSlot", ["active"])
+
+class MockEngine(NamedTuple):
+    downloader: MockDownloader
+
+
+class MockSlot(NamedTuple):
+    active: list[Any]
 
 
 class MockDownloader:
     def __init__(self):
         self.slots = {}
 
-    def _get_slot_key(self, request, spider):
+    def get_slot_key(self, request):
         if Downloader.DOWNLOAD_SLOT in request.meta:
             return request.meta[Downloader.DOWNLOAD_SLOT]
 
@@ -43,21 +51,21 @@ class MockDownloader:
 
 class MockCrawler(Crawler):
     def __init__(self, priority_queue_cls, jobdir):
-        settings = dict(
-            SCHEDULER_DEBUG=False,
-            SCHEDULER_DISK_QUEUE="scrapy.squeues.PickleLifoDiskQueue",
-            SCHEDULER_MEMORY_QUEUE="scrapy.squeues.LifoMemoryQueue",
-            SCHEDULER_PRIORITY_QUEUE=priority_queue_cls,
-            JOBDIR=jobdir,
-            DUPEFILTER_CLASS="scrapy.dupefilters.BaseDupeFilter",
-            REQUEST_FINGERPRINTER_IMPLEMENTATION="2.7",
-        )
+        settings = {
+            "SCHEDULER_DEBUG": False,
+            "SCHEDULER_DISK_QUEUE": "scrapy.squeues.PickleLifoDiskQueue",
+            "SCHEDULER_MEMORY_QUEUE": "scrapy.squeues.LifoMemoryQueue",
+            "SCHEDULER_PRIORITY_QUEUE": priority_queue_cls,
+            "JOBDIR": jobdir,
+            "DUPEFILTER_CLASS": "scrapy.dupefilters.BaseDupeFilter",
+        }
         super().__init__(Spider, settings)
         self.engine = MockEngine(downloader=MockDownloader())
+        self.stats = load_object(self.settings["STATS_CLASS"])(self)
 
 
 class SchedulerHandler:
-    priority_queue_cls = None
+    priority_queue_cls: str | None = None
     jobdir = None
 
     def create_scheduler(self):
@@ -251,7 +259,7 @@ def _is_scheduling_fair(enqueued_slots, dequeued_slots):
 
 
 class DownloaderAwareSchedulerTestMixin:
-    priority_queue_cls = "scrapy.pqueues.DownloaderAwarePriorityQueue"
+    priority_queue_cls: str | None = "scrapy.pqueues.DownloaderAwarePriorityQueue"
     reopen = False
 
     def test_logic(self):
@@ -269,19 +277,17 @@ class DownloaderAwareSchedulerTestMixin:
         downloader = self.mock_crawler.engine.downloader
         while self.scheduler.has_pending_requests():
             request = self.scheduler.next_request()
-            # pylint: disable=protected-access
-            slot = downloader._get_slot_key(request, None)
+            slot = downloader.get_slot_key(request)
             dequeued_slots.append(slot)
             downloader.increment(slot)
             requests.append(request)
 
         for request in requests:
-            # pylint: disable=protected-access
-            slot = downloader._get_slot_key(request, None)
+            slot = downloader.get_slot_key(request)
             downloader.decrement(slot)
 
         self.assertTrue(
-            _is_scheduling_fair(list(s for u, s in _URLS_WITH_SLOTS), dequeued_slots)
+            _is_scheduling_fair([s for u, s in _URLS_WITH_SLOTS], dequeued_slots)
         )
         self.assertEqual(sum(len(s.active) for s in downloader.slots.values()), 0)
 
@@ -335,10 +341,10 @@ class TestIntegrationWithDownloaderAwareInMemory(TestCase):
 
 class TestIncompatibility(unittest.TestCase):
     def _incompatible(self):
-        settings = dict(
-            SCHEDULER_PRIORITY_QUEUE="scrapy.pqueues.DownloaderAwarePriorityQueue",
-            CONCURRENT_REQUESTS_PER_IP=1,
-        )
+        settings = {
+            "SCHEDULER_PRIORITY_QUEUE": "scrapy.pqueues.DownloaderAwarePriorityQueue",
+            "CONCURRENT_REQUESTS_PER_IP": 1,
+        }
         crawler = get_crawler(Spider, settings)
         scheduler = Scheduler.from_crawler(crawler)
         spider = Spider(name="spider")

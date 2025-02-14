@@ -1,10 +1,6 @@
-import sys
 import unittest
-import warnings
-from contextlib import suppress
 
 from scrapy import Request, Spider
-from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.http import FormRequest, JsonRequest
 from scrapy.utils.request import request_from_dict
 
@@ -151,7 +147,7 @@ class RequestSerializationTest(unittest.TestCase):
 
         spider = MySpider()
         r = Request("http://www.example.com", callback=spider.parse)
-        setattr(spider, "parse", None)
+        spider.parse = None
         self.assertRaises(ValueError, r.to_dict, spider=spider)
 
     def test_callback_not_available(self):
@@ -162,32 +158,8 @@ class RequestSerializationTest(unittest.TestCase):
         self.assertRaises(ValueError, request_from_dict, d, spider=Spider("foo"))
 
 
-class DeprecatedMethodsRequestSerializationTest(RequestSerializationTest):
-    def _assert_serializes_ok(self, request, spider=None):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            with suppress(KeyError):
-                del sys.modules[
-                    "scrapy.utils.reqser"
-                ]  # delete module to reset the deprecation warning
-
-            from scrapy.utils.reqser import request_from_dict as _from_dict
-            from scrapy.utils.reqser import request_to_dict as _to_dict
-
-            request_copy = _from_dict(_to_dict(request, spider), spider)
-            self._assert_same_request(request, request_copy)
-
-            self.assertEqual(len(caught), 1)
-            self.assertTrue(issubclass(caught[0].category, ScrapyDeprecationWarning))
-            self.assertEqual(
-                "Module scrapy.utils.reqser is deprecated, please use request.to_dict method"
-                " and/or scrapy.utils.request.request_from_dict instead",
-                str(caught[0].message),
-            )
-
-
 class TestSpiderMixin:
-    def __mixin_callback(self, response):
+    def __mixin_callback(self, response):  # pylint: disable=unused-private-member
         pass
 
 
@@ -219,7 +191,8 @@ class TestSpider(Spider, TestSpiderMixin):
     __parse_item_reference = private_parse_item
     __handle_error_reference = private_handle_error
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.delegated_callback = TestSpiderDelegation().delegated_callback
 
     def parse_item(self, response):
@@ -228,5 +201,5 @@ class TestSpider(Spider, TestSpiderMixin):
     def handle_error(self, failure):
         pass
 
-    def __parse_item_private(self, response):
+    def __parse_item_private(self, response):  # pylint: disable=unused-private-member
         pass
