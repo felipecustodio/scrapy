@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import inspect
 import json
@@ -6,29 +8,31 @@ import platform
 import re
 import subprocess
 import sys
-import tempfile
 from contextlib import contextmanager
+from io import StringIO
 from itertools import chain
 from pathlib import Path
 from shutil import copytree, rmtree
 from stat import S_IWRITE as ANYONE_WRITE_PERMISSION
-from tempfile import mkdtemp
+from tempfile import TemporaryFile, mkdtemp
 from threading import Timer
-from typing import Dict, Generator, Optional, Union
-from unittest import skipIf
+from typing import TYPE_CHECKING
+from unittest import mock, skipIf
 
-from pytest import mark
-from twisted import version as twisted_version
-from twisted.python.versions import Version
+import pytest
 from twisted.trial import unittest
 
 import scrapy
+from scrapy.cmdline import _pop_command_name, _print_unknown_command_msg
 from scrapy.commands import ScrapyCommand, ScrapyHelpFormatter, view
 from scrapy.commands.startproject import IGNORE
 from scrapy.settings import Settings
 from scrapy.utils.python import to_unicode
 from scrapy.utils.test import get_testenv
 from tests.test_crawler import ExceptionSpider, NoRequestsSpider
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class CommandSettings(unittest.TestCase):
@@ -84,14 +88,14 @@ class ProjectTest(unittest.TestCase):
         rmtree(self.temp_path)
 
     def call(self, *new_args, **kwargs):
-        with tempfile.TemporaryFile() as out:
-            args = (sys.executable, "-m", "scrapy.cmdline") + new_args
+        with TemporaryFile() as out:
+            args = (sys.executable, "-m", "scrapy.cmdline", *new_args)
             return subprocess.call(
                 args, stdout=out, stderr=out, cwd=self.cwd, env=self.env, **kwargs
             )
 
     def proc(self, *new_args, **popen_kwargs):
-        args = (sys.executable, "-m", "scrapy.cmdline") + new_args
+        args = (sys.executable, "-m", "scrapy.cmdline", *new_args)
         p = subprocess.Popen(
             args,
             cwd=popen_kwargs.pop("cwd", self.cwd),
@@ -104,7 +108,7 @@ class ProjectTest(unittest.TestCase):
         def kill_proc():
             p.kill()
             p.communicate()
-            assert False, "Command took too much time to complete"
+            raise AssertionError("Command took too much time to complete")
 
         timer = Timer(15, kill_proc)
         try:
@@ -115,9 +119,7 @@ class ProjectTest(unittest.TestCase):
 
         return p, to_unicode(stdout), to_unicode(stderr)
 
-    def find_in_file(
-        self, filename: Union[str, os.PathLike], regex
-    ) -> Optional[re.Match]:
+    def find_in_file(self, filename: str | os.PathLike, regex) -> re.Match | None:
         """Find first pattern occurrence in file"""
         pattern = re.compile(regex)
         with Path(filename).open("r", encoding="utf-8") as f:
@@ -196,14 +198,14 @@ class StartprojectTest(ProjectTest):
 
 
 def get_permissions_dict(
-    path: Union[str, os.PathLike], renamings=None, ignore=None
-) -> Dict[str, str]:
+    path: str | os.PathLike, renamings=None, ignore=None
+) -> dict[str, str]:
     def get_permissions(path: Path) -> str:
         return oct(path.stat().st_mode)
 
     path_obj = Path(path)
 
-    renamings = renamings or tuple()
+    renamings = renamings or ()
     permissions_dict = {
         ".": get_permissions(path_obj),
     }
@@ -238,7 +240,7 @@ class StartprojectTemplatesTest(ProjectTest):
         args = ["--set", f"TEMPLATES_DIR={self.tmpl}"]
         p, out, err = self.proc("startproject", self.project_name, *args)
         self.assertIn(
-            f"New Scrapy project '{self.project_name}', " "using template directory",
+            f"New Scrapy project '{self.project_name}', using template directory",
             out,
         )
         self.assertIn(self.tmpl_proj, out)
@@ -652,6 +654,24 @@ class MiscCommandsTest(CommandTest):
     def test_list(self):
         self.assertEqual(0, self.call("list"))
 
+    def test_command_not_found(self):
+        na_msg = """
+The list command is not available from this location.
+These commands are only available from within a project: check, crawl, edit, list, parse.
+"""
+        not_found_msg = """
+Unknown command: abc
+"""
+        params = [
+            ("list", 0, na_msg),
+            ("abc", 0, not_found_msg),
+            ("abc", 1, not_found_msg),
+        ]
+        for cmdname, inproject, message in params:
+            with mock.patch("sys.stdout", new=StringIO()) as out:
+                _print_unknown_command_msg(Settings(), cmdname, inproject)
+                self.assertEqual(out.getvalue().strip(), message.strip())
+
 
 class RunSpiderCommandTest(CommandTest):
     spider_filename = "myspider.py"
@@ -677,7 +697,7 @@ class BadSpider(scrapy.Spider):
         """
 
     @contextmanager
-    def _create_file(self, content, name=None) -> Generator[str, None, None]:
+    def _create_file(self, content, name=None) -> Iterator[str]:
         tmpdir = Path(self.mktemp())
         tmpdir.mkdir()
         if name:
@@ -802,17 +822,7 @@ class MySpider(scrapy.Spider):
             "Using reactor: twisted.internet.asyncioreactor.AsyncioSelectorReactor", log
         )
 
-    @mark.skipif(
-        sys.implementation.name == "pypy",
-        reason="uvloop does not support pypy properly",
-    )
-    @mark.skipif(
-        platform.system() == "Windows", reason="uvloop does not support Windows"
-    )
-    @mark.skipif(
-        twisted_version == Version("twisted", 21, 2, 0),
-        reason="https://twistedmatrix.com/trac/ticket/10106",
-    )
+    @pytest.mark.requires_uvloop
     def test_custom_asyncio_loop_enabled_true(self):
         log = self.get_log(
             self.debug_log_spider,
@@ -919,42 +929,99 @@ class MySpider(scrapy.Spider):
         log = self.get_log(spider_code, args=args)
         self.assertIn("[myspider] DEBUG: FEEDS: {'stdout:': {'format': 'json'}}", log)
 
+    @skipIf(platform.system() == "Windows", reason="Linux only")
+    def test_absolute_path_linux(self):
+        spider_code = """
+import scrapy
 
-@skipIf(platform.system() != "Windows", "Windows required for .pyw files")
+class MySpider(scrapy.Spider):
+    name = 'myspider'
+
+    start_urls = ["data:,"]
+
+    def parse(self, response):
+        yield {"hello": "world"}
+        """
+        temp_dir = mkdtemp()
+
+        args = ["-o", f"{temp_dir}/output1.json:json"]
+        log = self.get_log(spider_code, args=args)
+        self.assertIn(
+            f"[scrapy.extensions.feedexport] INFO: Stored json feed (1 items) in: {temp_dir}/output1.json",
+            log,
+        )
+
+        args = ["-o", f"{temp_dir}/output2.json"]
+        log = self.get_log(spider_code, args=args)
+        self.assertIn(
+            f"[scrapy.extensions.feedexport] INFO: Stored json feed (1 items) in: {temp_dir}/output2.json",
+            log,
+        )
+
+    @skipIf(platform.system() != "Windows", reason="Windows only")
+    def test_absolute_path_windows(self):
+        spider_code = """
+import scrapy
+
+class MySpider(scrapy.Spider):
+    name = 'myspider'
+
+    start_urls = ["data:,"]
+
+    def parse(self, response):
+        yield {"hello": "world"}
+        """
+        temp_dir = mkdtemp()
+
+        args = ["-o", f"{temp_dir}\\output1.json:json"]
+        log = self.get_log(spider_code, args=args)
+        self.assertIn(
+            f"[scrapy.extensions.feedexport] INFO: Stored json feed (1 items) in: {temp_dir}\\output1.json",
+            log,
+        )
+
+        args = ["-o", f"{temp_dir}\\output2.json"]
+        log = self.get_log(spider_code, args=args)
+        self.assertIn(
+            f"[scrapy.extensions.feedexport] INFO: Stored json feed (1 items) in: {temp_dir}\\output2.json",
+            log,
+        )
+
+    def test_args_change_settings(self):
+        spider_code = """
+import scrapy
+
+class MySpider(scrapy.Spider):
+    name = 'myspider'
+
+    @classmethod
+    def from_crawler(cls, crawler, *args, **kwargs):
+        spider = super().from_crawler(crawler, *args, **kwargs)
+        spider.settings.set("FOO", kwargs.get("foo"))
+        return spider
+
+    def start_requests(self):
+        self.logger.info(f"The value of FOO is {self.settings.getint('FOO')}")
+        return []
+"""
+        args = ["-a", "foo=42"]
+        log = self.get_log(spider_code, args=args)
+        self.assertIn("Spider closed (finished)", log)
+        self.assertIn("The value of FOO is 42", log)
+
+
 class WindowsRunSpiderCommandTest(RunSpiderCommandTest):
     spider_filename = "myspider.pyw"
 
     def setUp(self):
-        super().setUp()
+        if platform.system() != "Windows":
+            raise unittest.SkipTest("Windows required for .pyw files")
+        return super().setUp()
 
     def test_start_requests_errors(self):
         log = self.get_log(self.badspider, name="badspider.pyw")
         self.assertIn("start_requests", log)
         self.assertIn("badspider.pyw", log)
-
-    def test_run_good_spider(self):
-        super().test_run_good_spider()
-
-    def test_runspider(self):
-        super().test_runspider()
-
-    def test_runspider_dnscache_disabled(self):
-        super().test_runspider_dnscache_disabled()
-
-    def test_runspider_log_level(self):
-        super().test_runspider_log_level()
-
-    def test_runspider_log_short_names(self):
-        super().test_runspider_log_short_names()
-
-    def test_runspider_no_spider_found(self):
-        super().test_runspider_no_spider_found()
-
-    def test_output(self):
-        super().test_output()
-
-    def test_overwrite_output(self):
-        super().test_overwrite_output()
 
     def test_runspider_unable_to_load(self):
         raise unittest.SkipTest("Already Tested in 'RunSpiderCommandTest' ")
@@ -967,6 +1034,7 @@ class BenchCommandTest(CommandTest):
         )
         self.assertIn("INFO: Crawled", log)
         self.assertNotIn("Unhandled Error", log)
+        self.assertNotIn("log_count/ERROR", log)
 
 
 class ViewCommandTest(CommandTest):
@@ -1096,3 +1164,29 @@ class HelpMessageTest(CommandTest):
         for command in self.commands:
             _, out, _ = self.proc(command, "-h")
             self.assertIn("Usage", out)
+
+
+class PopCommandNameTest(unittest.TestCase):
+    def test_valid_command(self):
+        argv = ["scrapy", "crawl", "my_spider"]
+        command = _pop_command_name(argv)
+        self.assertEqual(command, "crawl")
+        self.assertEqual(argv, ["scrapy", "my_spider"])
+
+    def test_no_command(self):
+        argv = ["scrapy"]
+        command = _pop_command_name(argv)
+        self.assertIsNone(command)
+        self.assertEqual(argv, ["scrapy"])
+
+    def test_option_before_command(self):
+        argv = ["scrapy", "-h", "crawl"]
+        command = _pop_command_name(argv)
+        self.assertEqual(command, "crawl")
+        self.assertEqual(argv, ["scrapy", "-h"])
+
+    def test_option_after_command(self):
+        argv = ["scrapy", "crawl", "-h"]
+        command = _pop_command_name(argv)
+        self.assertEqual(command, "crawl")
+        self.assertEqual(argv, ["scrapy", "-h"])

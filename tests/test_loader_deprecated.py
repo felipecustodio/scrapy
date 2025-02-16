@@ -4,7 +4,6 @@ Once we remove the references from scrapy, we can remove these tests.
 """
 
 import unittest
-import warnings
 from functools import partial
 
 from itemloaders.processors import (
@@ -18,9 +17,6 @@ from itemloaders.processors import (
 
 from scrapy.item import Field, Item
 from scrapy.loader import ItemLoader
-from scrapy.loader.common import wrap_loader_context
-from scrapy.utils.deprecate import ScrapyDeprecationWarning
-from scrapy.utils.misc import extract_regex
 
 
 # test items
@@ -28,17 +24,17 @@ class NameItem(Item):
     name = Field()
 
 
-class TestItem(NameItem):
+class SummaryItem(NameItem):
     url = Field()
     summary = Field()
 
 
 # test item loaders
 class NameItemLoader(ItemLoader):
-    default_item_class = TestItem
+    default_item_class = SummaryItem
 
 
-class TestItemLoader(NameItemLoader):
+class ProcessorItemLoader(NameItemLoader):
     name_in = MapCompose(lambda v: v.title())
 
 
@@ -55,7 +51,7 @@ def processor_with_args(value, other=None, loader_context=None):
 
 class BasicItemLoaderTest(unittest.TestCase):
     def test_load_item_using_default_loader(self):
-        i = TestItem()
+        i = SummaryItem()
         i["summary"] = "lala"
         il = ItemLoader(item=i)
         il.add_value("name", "marta")
@@ -65,7 +61,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(item["name"], ["marta"])
 
     def test_load_item_using_custom_loader(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", "marta")
         item = il.load_item()
         self.assertEqual(item["name"], ["Marta"])
@@ -73,8 +69,7 @@ class BasicItemLoaderTest(unittest.TestCase):
     def test_load_item_ignore_none_field_values(self):
         def validate_sku(value):
             # Let's assume a SKU is only digits.
-            if value.isdigit():
-                return value
+            return value if value.isdigit() else None
 
         class MyLoader(ItemLoader):
             name_out = Compose(lambda vs: vs[0])  # take first which allows empty values
@@ -130,7 +125,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         )
 
     def test_add_value(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", "marta")
         self.assertEqual(il.get_collected_values("name"), ["Marta"])
         self.assertEqual(il.get_output_value("name"), ["Marta"])
@@ -151,7 +146,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_collected_values("name"), [0])
 
     def test_replace_value(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.replace_value("name", "marta")
         self.assertEqual(il.get_collected_values("name"), ["Marta"])
         self.assertEqual(il.get_output_value("name"), ["Marta"])
@@ -234,7 +229,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["mart"])
 
     def test_input_processor_inheritance(self):
-        class ChildItemLoader(TestItemLoader):
+        class ChildItemLoader(ProcessorItemLoader):
             url_in = MapCompose(lambda v: v.lower())
 
         il = ChildItemLoader()
@@ -270,8 +265,8 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["marta"])
 
     def test_extend_custom_input_processors(self):
-        class ChildItemLoader(TestItemLoader):
-            name_in = MapCompose(TestItemLoader.name_in, str.swapcase)
+        class ChildItemLoader(ProcessorItemLoader):
+            name_in = MapCompose(ProcessorItemLoader.name_in, str.swapcase)
 
         il = ChildItemLoader()
         il.add_value("name", "marta")
@@ -288,11 +283,11 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["MART"])
 
     def test_output_processor_using_function(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", ["mar", "ta"])
         self.assertEqual(il.get_output_value("name"), ["Mar", "Ta"])
 
-        class TakeFirstItemLoader(TestItemLoader):
+        class TakeFirstItemLoader(ProcessorItemLoader):
             name_out = " ".join
 
         il = TakeFirstItemLoader()
@@ -301,7 +296,7 @@ class BasicItemLoaderTest(unittest.TestCase):
 
     def test_output_processor_error(self):
         class TestItemLoader(ItemLoader):
-            default_item_class = TestItem
+            default_item_class = SummaryItem
             name_out = MapCompose(float)
 
         il = TestItemLoader()
@@ -324,30 +319,30 @@ class BasicItemLoaderTest(unittest.TestCase):
         assert expected_exc_str in s, s
 
     def test_output_processor_using_classes(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", ["mar", "ta"])
         self.assertEqual(il.get_output_value("name"), ["Mar", "Ta"])
 
-        class TakeFirstItemLoader(TestItemLoader):
+        class TakeFirstItemLoader(ProcessorItemLoader):
             name_out = Join()
 
         il = TakeFirstItemLoader()
         il.add_value("name", ["mar", "ta"])
         self.assertEqual(il.get_output_value("name"), "Mar Ta")
 
-        class TakeFirstItemLoader(TestItemLoader):
+        class TakeFirstItemLoader2(ProcessorItemLoader):
             name_out = Join("<br>")
 
-        il = TakeFirstItemLoader()
+        il = TakeFirstItemLoader2()
         il.add_value("name", ["mar", "ta"])
         self.assertEqual(il.get_output_value("name"), "Mar<br>Ta")
 
     def test_default_output_processor(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", ["mar", "ta"])
         self.assertEqual(il.get_output_value("name"), ["Mar", "Ta"])
 
-        class LalaItemLoader(TestItemLoader):
+        class LalaItemLoader(ProcessorItemLoader):
             default_output_processor = Identity()
 
         il = LalaItemLoader()
@@ -355,7 +350,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["Mar", "Ta"])
 
     def test_loader_context_on_declaration(self):
-        class ChildItemLoader(TestItemLoader):
+        class ChildItemLoader(ProcessorItemLoader):
             url_in = MapCompose(processor_with_args, key="val")
 
         il = ChildItemLoader()
@@ -365,7 +360,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("url"), ["val"])
 
     def test_loader_context_on_instantiation(self):
-        class ChildItemLoader(TestItemLoader):
+        class ChildItemLoader(ProcessorItemLoader):
             url_in = MapCompose(processor_with_args)
 
         il = ChildItemLoader(key="val")
@@ -375,7 +370,7 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("url"), ["val"])
 
     def test_loader_context_on_assign(self):
-        class ChildItemLoader(TestItemLoader):
+        class ChildItemLoader(ProcessorItemLoader):
             url_in = MapCompose(processor_with_args)
 
         il = ChildItemLoader()
@@ -389,10 +384,10 @@ class BasicItemLoaderTest(unittest.TestCase):
         def processor(value, loader_context):
             return loader_context["item"]["name"]
 
-        class ChildItemLoader(TestItemLoader):
+        class ChildItemLoader(ProcessorItemLoader):
             url_in = MapCompose(processor)
 
-        it = TestItem(name="marta")
+        it = SummaryItem(name="marta")
         il = ChildItemLoader(item=it)
         il.add_value("url", "text")
         self.assertEqual(il.get_output_value("url"), ["marta"])
@@ -530,7 +525,7 @@ class InitializationFromDictTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["foo"])
         loaded_item = il.load_item()
         self.assertIsInstance(loaded_item, self.item_class)
-        self.assertEqual(loaded_item, dict({"name": ["foo"]}))
+        self.assertEqual(loaded_item, {"name": ["foo"]})
 
     def test_get_output_value_list(self):
         """Getting output value must not remove value from item"""
@@ -539,7 +534,7 @@ class InitializationFromDictTest(unittest.TestCase):
         self.assertEqual(il.get_output_value("name"), ["foo", "bar"])
         loaded_item = il.load_item()
         self.assertIsInstance(loaded_item, self.item_class)
-        self.assertEqual(loaded_item, dict({"name": ["foo", "bar"]}))
+        self.assertEqual(loaded_item, {"name": ["foo", "bar"]})
 
     def test_values_single(self):
         """Values from initial item must be added to loader._values"""
@@ -569,37 +564,37 @@ class NoInputReprocessingFromDictTest(unittest.TestCase):
     """
 
     def test_avoid_reprocessing_with_initial_values_single(self):
-        il = NoInputReprocessingDictLoader(item=dict(title="foo"))
+        il = NoInputReprocessingDictLoader(item={"title": "foo"})
         il_loaded = il.load_item()
-        self.assertEqual(il_loaded, dict(title="foo"))
+        self.assertEqual(il_loaded, {"title": "foo"})
         self.assertEqual(
-            NoInputReprocessingDictLoader(item=il_loaded).load_item(), dict(title="foo")
+            NoInputReprocessingDictLoader(item=il_loaded).load_item(), {"title": "foo"}
         )
 
     def test_avoid_reprocessing_with_initial_values_list(self):
-        il = NoInputReprocessingDictLoader(item=dict(title=["foo", "bar"]))
+        il = NoInputReprocessingDictLoader(item={"title": ["foo", "bar"]})
         il_loaded = il.load_item()
-        self.assertEqual(il_loaded, dict(title="foo"))
+        self.assertEqual(il_loaded, {"title": "foo"})
         self.assertEqual(
-            NoInputReprocessingDictLoader(item=il_loaded).load_item(), dict(title="foo")
+            NoInputReprocessingDictLoader(item=il_loaded).load_item(), {"title": "foo"}
         )
 
     def test_avoid_reprocessing_without_initial_values_single(self):
         il = NoInputReprocessingDictLoader()
         il.add_value("title", "foo")
         il_loaded = il.load_item()
-        self.assertEqual(il_loaded, dict(title="FOO"))
+        self.assertEqual(il_loaded, {"title": "FOO"})
         self.assertEqual(
-            NoInputReprocessingDictLoader(item=il_loaded).load_item(), dict(title="FOO")
+            NoInputReprocessingDictLoader(item=il_loaded).load_item(), {"title": "FOO"}
         )
 
     def test_avoid_reprocessing_without_initial_values_list(self):
         il = NoInputReprocessingDictLoader()
         il.add_value("title", ["foo", "bar"])
         il_loaded = il.load_item()
-        self.assertEqual(il_loaded, dict(title="FOO"))
+        self.assertEqual(il_loaded, {"title": "FOO"})
         self.assertEqual(
-            NoInputReprocessingDictLoader(item=il_loaded).load_item(), dict(title="FOO")
+            NoInputReprocessingDictLoader(item=il_loaded).load_item(), {"title": "FOO"}
         )
 
 
@@ -682,11 +677,11 @@ class SelectJmesTestCase(unittest.TestCase):
     }
 
     def test_output(self):
-        for tl in self.test_list_equals:
-            expr, test_list, expected = self.test_list_equals[tl]
+        for k, v in self.test_list_equals.items():
+            expr, test_list, expected = v
             test = SelectJmes(expr)(test_list)
             self.assertEqual(
-                test, expected, msg=f'test "{tl}" got {test} expected {expected}'
+                test, expected, msg=f'test "{k}" got {test} expected {expected}'
             )
 
 
@@ -720,26 +715,3 @@ class FunctionProcessorTestCase(unittest.TestCase):
         lo.add_value("foo", "  bar  ")
         lo.add_value("foo", ["  asdf  ", "  qwerty  "])
         self.assertEqual(dict(lo.load_item()), {"foo": ["BAR", "ASDF", "QWERTY"]})
-
-
-class DeprecatedUtilityFunctionsTestCase(unittest.TestCase):
-    def test_deprecated_wrap_loader_context(self):
-        def function(*args):
-            return None
-
-        with warnings.catch_warnings(record=True) as w:
-            wrap_loader_context(function, context={})
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, ScrapyDeprecationWarning)
-
-    def test_deprecated_extract_regex(self):
-        with warnings.catch_warnings(record=True) as w:
-            extract_regex(r"\w+", "this is a test")
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, ScrapyDeprecationWarning)
-
-
-if __name__ == "__main__":
-    unittest.main()

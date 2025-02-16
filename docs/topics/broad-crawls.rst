@@ -116,7 +116,7 @@ Reduce log level
 When doing broad crawls you are often only interested in the crawl rates you
 get and any errors found. These stats are reported by Scrapy when using the
 ``INFO`` log level. In order to save CPU (and log storage requirements) you
-should not use ``DEBUG`` log level when preforming large broad crawls in
+should not use ``DEBUG`` log level when performing large broad crawls in
 production. Using ``DEBUG`` level when developing your (broad) crawler may be
 fine though.
 
@@ -181,32 +181,6 @@ To disable redirects use:
 .. code-block:: python
 
     REDIRECT_ENABLED = False
-
-Enable crawling of "Ajax Crawlable Pages"
-=========================================
-
-Some pages (up to 1%, based on empirical data from year 2013) declare
-themselves as `ajax crawlable`_. This means they provide plain HTML
-version of content that is usually available only via AJAX.
-Pages can indicate it in two ways:
-
-1) by using ``#!`` in URL - this is the default way;
-2) by using a special meta tag - this way is used on
-   "main", "index" website pages.
-
-Scrapy handles (1) automatically; to handle (2) enable
-:ref:`AjaxCrawlMiddleware <ajaxcrawl-middleware>`:
-
-.. code-block:: python
-
-    AJAXCRAWL_ENABLED = True
-
-When doing broad crawls it's common to crawl a lot of "index" web pages;
-AjaxCrawlMiddleware helps to crawl them correctly.
-It is turned OFF by default because it has some performance overhead,
-and enabling it for focused crawls doesn't make much sense.
-
-.. _ajax crawlable: https://developers.google.com/search/docs/ajax-crawling/docs/getting-started
 
 .. _broad-crawls-bfo:
 

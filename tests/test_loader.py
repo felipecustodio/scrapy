@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 import unittest
 
@@ -16,12 +18,12 @@ class NameItem(Item):
     name = Field()
 
 
-class TestItem(NameItem):
+class SummaryItem(NameItem):
     url = Field()
     summary = Field()
 
 
-class TestNestedItem(Item):
+class NestedItem(Item):
     name = Field()
     name_div = Field()
     name_value = Field()
@@ -36,20 +38,20 @@ class AttrsNameItem:
 
 
 @dataclasses.dataclass
-class TestDataClass:
+class NameDataClass:
     name: list = dataclasses.field(default_factory=list)
 
 
 # test item loaders
 class NameItemLoader(ItemLoader):
-    default_item_class = TestItem
+    default_item_class = SummaryItem
 
 
 class NestedItemLoader(ItemLoader):
-    default_item_class = TestNestedItem
+    default_item_class = NestedItem
 
 
-class TestItemLoader(NameItemLoader):
+class ProcessorItemLoader(NameItemLoader):
     name_in = MapCompose(lambda v: v.title())
 
 
@@ -66,11 +68,11 @@ def processor_with_args(value, other=None, loader_context=None):
 
 class BasicItemLoaderTest(unittest.TestCase):
     def test_add_value_on_unknown_field(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         self.assertRaises(KeyError, il.add_value, "wrong_field", ["lala", "lolo"])
 
     def test_load_item_using_default_loader(self):
-        i = TestItem()
+        i = SummaryItem()
         i["summary"] = "lala"
         il = ItemLoader(item=i)
         il.add_value("name", "marta")
@@ -80,14 +82,14 @@ class BasicItemLoaderTest(unittest.TestCase):
         self.assertEqual(item["name"], ["marta"])
 
     def test_load_item_using_custom_loader(self):
-        il = TestItemLoader()
+        il = ProcessorItemLoader()
         il.add_value("name", "marta")
         item = il.load_item()
         self.assertEqual(item["name"], ["Marta"])
 
 
 class InitializationTestMixin:
-    item_class = None
+    item_class: type | None = None
 
     def test_keep_single_value(self):
         """Loaded item should contain values from the initial item"""
@@ -155,7 +157,7 @@ class InitializationTestMixin:
         self.assertEqual(il.get_output_value("name"), ["foo"])
         loaded_item = il.load_item()
         self.assertIsInstance(loaded_item, self.item_class)
-        self.assertEqual(ItemAdapter(loaded_item).asdict(), dict({"name": ["foo"]}))
+        self.assertEqual(ItemAdapter(loaded_item).asdict(), {"name": ["foo"]})
 
     def test_get_output_value_list(self):
         """Getting output value must not remove value from item"""
@@ -164,9 +166,7 @@ class InitializationTestMixin:
         self.assertEqual(il.get_output_value("name"), ["foo", "bar"])
         loaded_item = il.load_item()
         self.assertIsInstance(loaded_item, self.item_class)
-        self.assertEqual(
-            ItemAdapter(loaded_item).asdict(), dict({"name": ["foo", "bar"]})
-        )
+        self.assertEqual(ItemAdapter(loaded_item).asdict(), {"name": ["foo", "bar"]})
 
     def test_values_single(self):
         """Values from initial item must be added to loader._values"""
@@ -194,7 +194,7 @@ class InitializationFromAttrsItemTest(InitializationTestMixin, unittest.TestCase
 
 
 class InitializationFromDataClassTest(InitializationTestMixin, unittest.TestCase):
-    item_class = TestDataClass
+    item_class = NameDataClass
 
 
 class BaseNoInputReprocessingLoader(ItemLoader):
@@ -289,11 +289,11 @@ class SelectortemLoaderTest(unittest.TestCase):
     )
 
     def test_init_method(self):
-        l = TestItemLoader()
+        l = ProcessorItemLoader()
         self.assertEqual(l.selector, None)
 
     def test_init_method_errors(self):
-        l = TestItemLoader()
+        l = ProcessorItemLoader()
         self.assertRaises(RuntimeError, l.add_xpath, "url", "//a/@href")
         self.assertRaises(RuntimeError, l.replace_xpath, "url", "//a/@href")
         self.assertRaises(RuntimeError, l.get_xpath, "//a/@href")
@@ -303,7 +303,7 @@ class SelectortemLoaderTest(unittest.TestCase):
 
     def test_init_method_with_selector(self):
         sel = Selector(text="<html><body><div>marta</div></body></html>")
-        l = TestItemLoader(selector=sel)
+        l = ProcessorItemLoader(selector=sel)
         self.assertIs(l.selector, sel)
 
         l.add_xpath("name", "//div/text()")
@@ -311,7 +311,7 @@ class SelectortemLoaderTest(unittest.TestCase):
 
     def test_init_method_with_selector_css(self):
         sel = Selector(text="<html><body><div>marta</div></body></html>")
-        l = TestItemLoader(selector=sel)
+        l = ProcessorItemLoader(selector=sel)
         self.assertIs(l.selector, sel)
 
         l.add_css("name", "div::text")
@@ -320,18 +320,18 @@ class SelectortemLoaderTest(unittest.TestCase):
     def test_init_method_with_base_response(self):
         """Selector should be None after initialization"""
         response = Response("https://scrapy.org")
-        l = TestItemLoader(response=response)
+        l = ProcessorItemLoader(response=response)
         self.assertIs(l.selector, None)
 
     def test_init_method_with_response(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
 
         l.add_xpath("name", "//div/text()")
         self.assertEqual(l.get_output_value("name"), ["Marta"])
 
     def test_init_method_with_response_css(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
 
         l.add_css("name", "div::text")
@@ -350,12 +350,12 @@ class SelectortemLoaderTest(unittest.TestCase):
         )
 
     def test_add_xpath_re(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         l.add_xpath("name", "//div/text()", re="ma")
         self.assertEqual(l.get_output_value("name"), ["Ma"])
 
     def test_replace_xpath(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
         l.add_xpath("name", "//div/text()")
         self.assertEqual(l.get_output_value("name"), ["Marta"])
@@ -366,7 +366,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         self.assertEqual(l.get_output_value("name"), ["Paragraph", "Marta"])
 
     def test_get_xpath(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertEqual(l.get_xpath("//p/text()"), ["paragraph"])
         self.assertEqual(l.get_xpath("//p/text()", TakeFirst()), "paragraph")
         self.assertEqual(l.get_xpath("//p/text()", TakeFirst(), re="pa"), "pa")
@@ -376,14 +376,14 @@ class SelectortemLoaderTest(unittest.TestCase):
         )
 
     def test_replace_xpath_multi_fields(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         l.add_xpath(None, "//div/text()", TakeFirst(), lambda x: {"name": x})
         self.assertEqual(l.get_output_value("name"), ["Marta"])
         l.replace_xpath(None, "//p/text()", TakeFirst(), lambda x: {"name": x})
         self.assertEqual(l.get_output_value("name"), ["Paragraph"])
 
     def test_replace_xpath_re(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
         l.add_xpath("name", "//div/text()")
         self.assertEqual(l.get_output_value("name"), ["Marta"])
@@ -391,7 +391,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         self.assertEqual(l.get_output_value("name"), ["Ma"])
 
     def test_add_css_re(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         l.add_css("name", "div::text", re="ma")
         self.assertEqual(l.get_output_value("name"), ["Ma"])
 
@@ -399,7 +399,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         self.assertEqual(l.get_output_value("url"), ["www.scrapy.org"])
 
     def test_replace_css(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
         l.add_css("name", "div::text")
         self.assertEqual(l.get_output_value("name"), ["Marta"])
@@ -415,7 +415,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         self.assertEqual(l.get_output_value("url"), ["/images/logo.png"])
 
     def test_get_css(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertEqual(l.get_css("p::text"), ["paragraph"])
         self.assertEqual(l.get_css("p::text", TakeFirst()), "paragraph")
         self.assertEqual(l.get_css("p::text", TakeFirst(), re="pa"), "pa")
@@ -427,7 +427,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         )
 
     def test_replace_css_multi_fields(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         l.add_css(None, "div::text", TakeFirst(), lambda x: {"name": x})
         self.assertEqual(l.get_output_value("name"), ["Marta"])
         l.replace_css(None, "p::text", TakeFirst(), lambda x: {"name": x})
@@ -439,7 +439,7 @@ class SelectortemLoaderTest(unittest.TestCase):
         self.assertEqual(l.get_output_value("url"), ["/images/logo.png"])
 
     def test_replace_css_re(self):
-        l = TestItemLoader(response=self.response)
+        l = ProcessorItemLoader(response=self.response)
         self.assertTrue(l.selector)
         l.add_css("url", "a::attr(href)")
         self.assertEqual(l.get_output_value("url"), ["http://www.scrapy.org"])
@@ -586,7 +586,3 @@ class FunctionProcessorTestCase(unittest.TestCase):
         lo.add_value("foo", "  bar  ")
         lo.add_value("foo", ["  asdf  ", "  qwerty  "])
         self.assertEqual(dict(lo.load_item()), {"foo": ["BAR", "ASDF", "QWERTY"]})
-
-
-if __name__ == "__main__":
-    unittest.main()

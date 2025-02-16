@@ -16,7 +16,6 @@ class InjectArgumentsDownloaderMiddleware:
     def process_request(self, request, spider):
         if request.callback.__name__ == "parse_downloader_mw":
             request.cb_kwargs["from_process_request"] = True
-        return None
 
     def process_response(self, request, response, spider):
         if request.callback.__name__ == "parse_downloader_mw":
@@ -39,7 +38,6 @@ class InjectArgumentsSpiderMiddleware:
         request = response.request
         if request.callback.__name__ == "parse_spider_mw":
             request.cb_kwargs["from_process_spider_input"] = True
-        return None
 
     def process_spider_output(self, response, result, spider):
         for element in result:
@@ -62,7 +60,7 @@ class KeywordArgumentsSpider(MockServerSpider):
         },
     }
 
-    checks = []
+    checks: list[bool] = []
 
     def start_requests(self):
         data = {"key": "value", "number": 123, "callback": "some_callback"}
@@ -156,12 +154,14 @@ class KeywordArgumentsSpider(MockServerSpider):
 class CallbackKeywordArgumentsTestCase(TestCase):
     maxDiff = None
 
-    def setUp(self):
-        self.mockserver = MockServer()
-        self.mockserver.__enter__()
+    @classmethod
+    def setUpClass(cls):
+        cls.mockserver = MockServer()
+        cls.mockserver.__enter__()
 
-    def tearDown(self):
-        self.mockserver.__exit__(None, None, None)
+    @classmethod
+    def tearDownClass(cls):
+        cls.mockserver.__exit__(None, None, None)
 
     @defer.inlineCallbacks
     def test_callback_kwargs(self):

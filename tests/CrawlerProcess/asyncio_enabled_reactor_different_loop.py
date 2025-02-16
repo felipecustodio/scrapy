@@ -2,8 +2,9 @@ import asyncio
 import sys
 
 from twisted.internet import asyncioreactor
+from twisted.python import log
 
-if sys.version_info >= (3, 8) and sys.platform == "win32":
+if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 asyncioreactor.install(asyncio.get_event_loop())
 
@@ -24,5 +25,6 @@ process = CrawlerProcess(
         "ASYNCIO_EVENT_LOOP": "uvloop.Loop",
     }
 )
-process.crawl(NoRequestsSpider)
+d = process.crawl(NoRequestsSpider)
+d.addErrback(log.err)
 process.start()

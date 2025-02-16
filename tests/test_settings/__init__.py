@@ -1,6 +1,8 @@
 import unittest
 from unittest import mock
 
+import pytest
+
 from scrapy.settings import (
     SETTINGS_PRIORITIES,
     BaseSettings,
@@ -103,9 +105,10 @@ class BaseSettingsTest(unittest.TestCase):
 
     def test_set_calls_settings_attributes_methods_on_update(self):
         attr = SettingsAttribute("value", 10)
-        with mock.patch.object(attr, "__setattr__") as mock_setattr, mock.patch.object(
-            attr, "set"
-        ) as mock_set:
+        with (
+            mock.patch.object(attr, "__setattr__") as mock_setattr,
+            mock.patch.object(attr, "set") as mock_set,
+        ):
             self.settings.attributes = {"TEST_OPTION": attr}
 
             for priority in (0, 10, 20):
@@ -167,7 +170,7 @@ class BaseSettingsTest(unittest.TestCase):
 
         self.assertCountEqual(self.settings.attributes.keys(), ctrl_attributes.keys())
 
-        for key in ctrl_attributes.keys():
+        for key in ctrl_attributes:
             attr = self.settings.attributes[key]
             ctrl_attr = ctrl_attributes[key]
             self.assertEqual(attr.value, ctrl_attr.value)
@@ -199,6 +202,21 @@ class BaseSettingsTest(unittest.TestCase):
         settings.update({"key_lowprio": 3}, priority=20)
         self.assertEqual(settings["key_lowprio"], 1)
 
+    @pytest.mark.xfail(
+        raises=TypeError, reason="BaseSettings.update doesn't support kwargs input"
+    )
+    def test_update_kwargs(self):
+        settings = BaseSettings({"key": 0})
+        settings.update(key=1)  # pylint: disable=unexpected-keyword-arg
+
+    @pytest.mark.xfail(
+        raises=AttributeError,
+        reason="BaseSettings.update doesn't support iterable input",
+    )
+    def test_update_iterable(self):
+        settings = BaseSettings({"key": 0})
+        settings.update([("key", 1)])
+
     def test_update_jsonstring(self):
         settings = BaseSettings({"number": 0, "dict": BaseSettings({"key": "val"})})
         settings.update('{"number": 1, "newnumber": 2}')
@@ -217,6 +235,10 @@ class BaseSettingsTest(unittest.TestCase):
         self.assertIn("key_highprio", settings)
         del settings["key_highprio"]
         self.assertNotIn("key_highprio", settings)
+        with self.assertRaises(KeyError):
+            settings.delete("notkey")
+        with self.assertRaises(KeyError):
+            del settings["notkey"]
 
     def test_get(self):
         test_configuration = {
@@ -405,7 +427,7 @@ class SettingsTest(unittest.TestCase):
         mydict = settings.get("TEST_DICT")
         self.assertIsInstance(mydict, BaseSettings)
         self.assertIn("key", mydict)
-        self.assertEqual(mydict["key"], "val")
+        self.assertEqual(mydict["key"], "val")  # pylint: disable=unsubscriptable-object
         self.assertEqual(mydict.getpriority("key"), 0)
 
     @mock.patch("scrapy.settings.default_settings", default_settings)
@@ -419,7 +441,7 @@ class SettingsTest(unittest.TestCase):
 
     def test_passing_objects_as_values(self):
         from scrapy.core.downloader.handlers.file import FileDownloadHandler
-        from scrapy.utils.misc import create_instance
+        from scrapy.utils.misc import build_from_crawler
         from scrapy.utils.test import get_crawler
 
         class TestPipeline:
@@ -447,7 +469,7 @@ class SettingsTest(unittest.TestCase):
 
         myhandler = settings.getdict("DOWNLOAD_HANDLERS").pop("ftp")
         self.assertEqual(myhandler, FileDownloadHandler)
-        myhandler_instance = create_instance(myhandler, None, get_crawler())
+        myhandler_instance = build_from_crawler(myhandler, get_crawler())
         self.assertIsInstance(myhandler_instance, FileDownloadHandler)
         self.assertTrue(hasattr(myhandler_instance, "download_request"))
 
@@ -475,7 +497,3 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(
             str(error.exception), "Trying to modify an immutable Settings object"
         )
-
-
-if __name__ == "__main__":
-    unittest.main()

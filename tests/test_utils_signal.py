@@ -1,7 +1,7 @@
 import asyncio
 
+import pytest
 from pydispatch import dispatcher
-from pytest import mark
 from testfixtures import LogCapture
 from twisted.internet import defer, reactor
 from twisted.python.failure import Failure
@@ -67,7 +67,7 @@ class SendCatchLogDeferredTest2(SendCatchLogDeferredTest):
         return d
 
 
-@mark.usefixtures("reactor_pytest")
+@pytest.mark.usefixtures("reactor_pytest")
 class SendCatchLogDeferredAsyncDefTest(SendCatchLogDeferredTest):
     async def ok_handler(self, arg, handlers_called):
         handlers_called.add(self.ok_handler)
@@ -75,20 +75,14 @@ class SendCatchLogDeferredAsyncDefTest(SendCatchLogDeferredTest):
         await defer.succeed(42)
         return "OK"
 
-    def test_send_catch_log(self):
-        return super().test_send_catch_log()
 
-
-@mark.only_asyncio()
+@pytest.mark.only_asyncio
 class SendCatchLogDeferredAsyncioTest(SendCatchLogDeferredTest):
     async def ok_handler(self, arg, handlers_called):
         handlers_called.add(self.ok_handler)
         assert arg == "test"
         await asyncio.sleep(0.2)
         return await get_from_asyncio_queue("OK")
-
-    def test_send_catch_log(self):
-        return super().test_send_catch_log()
 
 
 class SendCatchLogTest2(unittest.TestCase):

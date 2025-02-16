@@ -2,13 +2,18 @@ import gzip
 import inspect
 import warnings
 from io import BytesIO
+from logging import WARNING
+from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from testfixtures import LogCapture
+from twisted.internet.defer import inlineCallbacks
 from twisted.trial import unittest
 from w3lib.url import safe_url_string
 
 from scrapy import signals
+from scrapy.crawler import Crawler
 from scrapy.http import HtmlResponse, Request, Response, TextResponse, XmlResponse
 from scrapy.linkextractors import LinkExtractor
 from scrapy.settings import Settings
@@ -22,7 +27,7 @@ from scrapy.spiders import (
 )
 from scrapy.spiders.init import InitSpider
 from scrapy.utils.test import get_crawler
-from tests import get_testdata
+from tests import get_testdata, tests_datadir
 
 
 class SpiderTest(unittest.TestCase):
@@ -96,6 +101,28 @@ class SpiderTest(unittest.TestCase):
         self.assertEqual(settings.get("TEST2"), "spider")
         self.assertEqual(settings.get("TEST3"), "project")
 
+    @inlineCallbacks
+    def test_settings_in_from_crawler(self):
+        spider_settings = {"TEST1": "spider", "TEST2": "spider"}
+        project_settings = {"TEST1": "project", "TEST3": "project"}
+
+        class TestSpider(self.spider_class):
+            name = "test"
+            custom_settings = spider_settings
+
+            @classmethod
+            def from_crawler(cls, crawler: Crawler, *args: Any, **kwargs: Any):
+                spider = super().from_crawler(crawler, *args, **kwargs)
+                spider.settings.set("TEST1", "spider_instance", priority="spider")
+                return spider
+
+        crawler = Crawler(TestSpider, project_settings)
+        self.assertEqual(crawler.settings.get("TEST1"), "spider")
+        self.assertEqual(crawler.settings.get("TEST2"), "spider")
+        self.assertEqual(crawler.settings.get("TEST3"), "project")
+        yield crawler.crawl()
+        self.assertEqual(crawler.settings.get("TEST1"), "spider_instance")
+
     def test_logger(self):
         spider = self.spider_class("example.com")
         with LogCapture() as lc:
@@ -124,10 +151,10 @@ class XMLFeedSpiderTest(SpiderTest):
         body = b"""<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns:x="http://www.google.com/schemas/sitemap/0.84"
                 xmlns:y="http://www.example.com/schemas/extras/1.0">
-        <url><x:loc>http://www.example.com/Special-Offers.html</loc><y:updated>2009-08-16</updated>
+        <url><x:loc>http://www.example.com/Special-Offers.html</x:loc><y:updated>2009-08-16</y:updated>
             <other value="bar" y:custom="fuu"/>
         </url>
-        <url><loc>http://www.example.com/</loc><y:updated>2009-08-16</updated><other value="foo"/></url>
+        <url><loc>http://www.example.com/</loc><y:updated>2009-08-16</y:updated><other value="foo"/></url>
         </urlset>"""
         response = XmlResponse(url="http://example.com/sitemap.xml", body=body)
 
@@ -217,7 +244,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -243,7 +270,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -272,7 +299,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 2)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -292,13 +319,12 @@ class CrawlSpiderTest(SpiderTest):
             rules = (Rule(LinkExtractor(), process_links="dummy_process_links"),)
 
             def dummy_process_links(self, links):
-                for link in links:
-                    yield link
+                yield from links
 
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -326,7 +352,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -357,7 +383,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -387,7 +413,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -419,7 +445,7 @@ class CrawlSpiderTest(SpiderTest):
         spider = _CrawlSpider()
         output = list(spider._requests_to_follow(response))
         self.assertEqual(len(output), 3)
-        self.assertTrue(all(map(lambda r: isinstance(r, Request), output)))
+        self.assertTrue(all(isinstance(r, Request) for r in output))
         self.assertEqual(
             [r.url for r in output],
             [
@@ -464,7 +490,8 @@ class SitemapSpiderTest(SpiderTest):
     GZBODY = f.getvalue()
 
     def assertSitemapBody(self, response, body):
-        spider = self.spider_class("example.com")
+        crawler = get_crawler()
+        spider = self.spider_class.from_crawler(crawler, "example.com")
         self.assertEqual(spider._get_sitemap_body(response), body)
 
     def test_get_sitemap_body(self):
@@ -482,6 +509,7 @@ class SitemapSpiderTest(SpiderTest):
             url="http://www.example.com/sitemap",
             body=self.GZBODY,
             headers={"content-type": "application/gzip"},
+            request=Request("http://www.example.com/sitemap"),
         )
         self.assertSitemapBody(r, self.BODY)
 
@@ -490,7 +518,11 @@ class SitemapSpiderTest(SpiderTest):
         self.assertSitemapBody(r, self.BODY)
 
     def test_get_sitemap_body_xml_url_compressed(self):
-        r = Response(url="http://www.example.com/sitemap.xml.gz", body=self.GZBODY)
+        r = Response(
+            url="http://www.example.com/sitemap.xml.gz",
+            body=self.GZBODY,
+            request=Request("http://www.example.com/sitemap"),
+        )
         self.assertSitemapBody(r, self.BODY)
 
         # .xml.gz but body decoded by HttpCompression middleware already
@@ -605,7 +637,7 @@ Sitemap: /sitemap-relative-url.xml
         class FilteredSitemapSpider(self.spider_class):
             def sitemap_filter(self, entries):
                 for entry in entries:
-                    alternate_links = entry.get("alternate", tuple())
+                    alternate_links = entry.get("alternate", ())
                     for link in alternate_links:
                         if "/deutsch/" in link:
                             entry["loc"] = link
@@ -665,6 +697,116 @@ Sitemap: /sitemap-relative-url.xml
         self.assertEqual(
             [req.url for req in spider._parse_sitemap(r)],
             ["http://www.example.com/sitemap2.xml"],
+        )
+
+    def test_compression_bomb_setting(self):
+        settings = {"DOWNLOAD_MAXSIZE": 10_000_000}
+        crawler = get_crawler(settings_dict=settings)
+        spider = self.spider_class.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(url="https://example.com")
+        response = Response(url="https://example.com", body=body, request=request)
+        self.assertIsNone(spider._get_sitemap_body(response))
+
+    def test_compression_bomb_spider_attr(self):
+        class DownloadMaxSizeSpider(self.spider_class):
+            download_maxsize = 10_000_000
+
+        crawler = get_crawler()
+        spider = DownloadMaxSizeSpider.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(url="https://example.com")
+        response = Response(url="https://example.com", body=body, request=request)
+        self.assertIsNone(spider._get_sitemap_body(response))
+
+    def test_compression_bomb_request_meta(self):
+        crawler = get_crawler()
+        spider = self.spider_class.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(
+            url="https://example.com", meta={"download_maxsize": 10_000_000}
+        )
+        response = Response(url="https://example.com", body=body, request=request)
+        self.assertIsNone(spider._get_sitemap_body(response))
+
+    def test_download_warnsize_setting(self):
+        settings = {"DOWNLOAD_WARNSIZE": 10_000_000}
+        crawler = get_crawler(settings_dict=settings)
+        spider = self.spider_class.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(url="https://example.com")
+        response = Response(url="https://example.com", body=body, request=request)
+        with LogCapture(
+            "scrapy.spiders.sitemap", propagate=False, level=WARNING
+        ) as log:
+            spider._get_sitemap_body(response)
+        log.check(
+            (
+                "scrapy.spiders.sitemap",
+                "WARNING",
+                (
+                    "<200 https://example.com> body size after decompression "
+                    "(11511612 B) is larger than the download warning size "
+                    "(10000000 B)."
+                ),
+            ),
+        )
+
+    def test_download_warnsize_spider_attr(self):
+        class DownloadWarnSizeSpider(self.spider_class):
+            download_warnsize = 10_000_000
+
+        crawler = get_crawler()
+        spider = DownloadWarnSizeSpider.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(
+            url="https://example.com", meta={"download_warnsize": 10_000_000}
+        )
+        response = Response(url="https://example.com", body=body, request=request)
+        with LogCapture(
+            "scrapy.spiders.sitemap", propagate=False, level=WARNING
+        ) as log:
+            spider._get_sitemap_body(response)
+        log.check(
+            (
+                "scrapy.spiders.sitemap",
+                "WARNING",
+                (
+                    "<200 https://example.com> body size after decompression "
+                    "(11511612 B) is larger than the download warning size "
+                    "(10000000 B)."
+                ),
+            ),
+        )
+
+    def test_download_warnsize_request_meta(self):
+        crawler = get_crawler()
+        spider = self.spider_class.from_crawler(crawler, "example.com")
+        body_path = Path(tests_datadir, "compressed", "bomb-gzip.bin")
+        body = body_path.read_bytes()
+        request = Request(
+            url="https://example.com", meta={"download_warnsize": 10_000_000}
+        )
+        response = Response(url="https://example.com", body=body, request=request)
+        with LogCapture(
+            "scrapy.spiders.sitemap", propagate=False, level=WARNING
+        ) as log:
+            spider._get_sitemap_body(response)
+        log.check(
+            (
+                "scrapy.spiders.sitemap",
+                "WARNING",
+                (
+                    "<200 https://example.com> body size after decompression "
+                    "(11511612 B) is larger than the download warning size "
+                    "(10000000 B)."
+                ),
+            ),
         )
 
 

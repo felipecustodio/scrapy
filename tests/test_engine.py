@@ -15,12 +15,13 @@ import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from logging import DEBUG
 from pathlib import Path
 from threading import Timer
+from unittest.mock import Mock
 from urllib.parse import urlparse
 
 import attr
-import pytest
 from itemadapter import ItemAdapter
 from pydispatch import dispatcher
 from twisted.internet import defer, reactor
@@ -28,18 +29,20 @@ from twisted.trial import unittest
 from twisted.web import server, static, util
 
 from scrapy import signals
-from scrapy.core.engine import ExecutionEngine
-from scrapy.exceptions import CloseSpider, ScrapyDeprecationWarning
+from scrapy.core.engine import ExecutionEngine, Slot
+from scrapy.core.scheduler import BaseScheduler
+from scrapy.exceptions import CloseSpider, IgnoreRequest
 from scrapy.http import Request
 from scrapy.item import Field, Item
 from scrapy.linkextractors import LinkExtractor
+from scrapy.signals import request_scheduled
 from scrapy.spiders import Spider
 from scrapy.utils.signal import disconnect_all
 from scrapy.utils.test import get_crawler
 from tests import get_testdata, tests_datadir
 
 
-class TestItem(Item):
+class MyItem(Item):
     name = Field()
     url = Field()
     price = Field()
@@ -59,15 +62,15 @@ class DataClassItem:
     price: int = 0
 
 
-class TestSpider(Spider):
+class MySpider(Spider):
     name = "scrapytest.org"
     allowed_domains = ["scrapytest.org", "localhost"]
 
     itemurl_re = re.compile(r"item\d+.html")
-    name_re = re.compile(r"<h1>(.*?)</h1>", re.M)
-    price_re = re.compile(r">Price: \$(.*?)<", re.M)
+    name_re = re.compile(r"<h1>(.*?)</h1>", re.MULTILINE)
+    price_re = re.compile(r">Price: \$(.*?)<", re.MULTILINE)
 
-    item_cls: type = TestItem
+    item_cls: type = MyItem
 
     def parse(self, response):
         xlink = LinkExtractor()
@@ -88,24 +91,24 @@ class TestSpider(Spider):
         return adapter.item
 
 
-class TestDupeFilterSpider(TestSpider):
+class DupeFilterSpider(MySpider):
     def start_requests(self):
         return (Request(url) for url in self.start_urls)  # no dont_filter=True
 
 
-class DictItemsSpider(TestSpider):
+class DictItemsSpider(MySpider):
     item_cls = dict
 
 
-class AttrsItemsSpider(TestSpider):
+class AttrsItemsSpider(MySpider):
     item_cls = AttrsItem
 
 
-class DataClassItemsSpider(TestSpider):
+class DataClassItemsSpider(MySpider):
     item_cls = DataClassItem
 
 
-class ItemZeroDivisionErrorSpider(TestSpider):
+class ItemZeroDivisionErrorSpider(MySpider):
     custom_settings = {
         "ITEM_PIPELINES": {
             "tests.pipelines.ProcessWithZeroDivisionErrorPipeline": 300,
@@ -113,7 +116,7 @@ class ItemZeroDivisionErrorSpider(TestSpider):
     }
 
 
-class ChangeCloseReasonSpider(TestSpider):
+class ChangeCloseReasonSpider(MySpider):
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
         spider = cls(*args, **kwargs)
@@ -240,46 +243,7 @@ class CrawlerRun:
         self.signals_caught[sig] = signalargs
 
 
-class EngineTest(unittest.TestCase):
-    @defer.inlineCallbacks
-    def test_crawler(self):
-        for spider in (
-            TestSpider,
-            DictItemsSpider,
-            AttrsItemsSpider,
-            DataClassItemsSpider,
-        ):
-            run = CrawlerRun(spider)
-            yield run.run()
-            self._assert_visited_urls(run)
-            self._assert_scheduled_requests(run, count=9)
-            self._assert_downloaded_responses(run, count=9)
-            self._assert_scraped_items(run)
-            self._assert_signals_caught(run)
-            self._assert_bytes_received(run)
-
-    @defer.inlineCallbacks
-    def test_crawler_dupefilter(self):
-        run = CrawlerRun(TestDupeFilterSpider)
-        yield run.run()
-        self._assert_scheduled_requests(run, count=8)
-        self._assert_dropped_requests(run)
-
-    @defer.inlineCallbacks
-    def test_crawler_itemerror(self):
-        run = CrawlerRun(ItemZeroDivisionErrorSpider)
-        yield run.run()
-        self._assert_items_error(run)
-
-    @defer.inlineCallbacks
-    def test_crawler_change_close_reason_on_idle(self):
-        run = CrawlerRun(ChangeCloseReasonSpider)
-        yield run.run()
-        self.assertEqual(
-            {"spider": run.spider, "reason": "custom_reason"},
-            run.signals_caught[signals.spider_closed],
-        )
-
+class EngineTestBase(unittest.TestCase):
     def _assert_visited_urls(self, run: CrawlerRun):
         must_be_visited = [
             "/",
@@ -291,9 +255,9 @@ class EngineTest(unittest.TestCase):
         ]
         urls_visited = {rp[0].url for rp in run.respplug}
         urls_expected = {run.geturl(p) for p in must_be_visited}
-        assert (
-            urls_expected <= urls_visited
-        ), f"URLs not visited: {list(urls_expected - urls_visited)}"
+        assert urls_expected <= urls_visited, (
+            f"URLs not visited: {list(urls_expected - urls_visited)}"
+        )
 
     def _assert_scheduled_requests(self, run: CrawlerRun, count=None):
         self.assertEqual(count, len(run.reqplug))
@@ -419,15 +383,56 @@ class EngineTest(unittest.TestCase):
             run.signals_caught[signals.spider_closed],
         )
 
+
+class EngineTest(EngineTestBase):
+    @defer.inlineCallbacks
+    def test_crawler(self):
+        for spider in (
+            MySpider,
+            DictItemsSpider,
+            AttrsItemsSpider,
+            DataClassItemsSpider,
+        ):
+            run = CrawlerRun(spider)
+            yield run.run()
+            self._assert_visited_urls(run)
+            self._assert_scheduled_requests(run, count=9)
+            self._assert_downloaded_responses(run, count=9)
+            self._assert_scraped_items(run)
+            self._assert_signals_caught(run)
+            self._assert_bytes_received(run)
+
+    @defer.inlineCallbacks
+    def test_crawler_dupefilter(self):
+        run = CrawlerRun(DupeFilterSpider)
+        yield run.run()
+        self._assert_scheduled_requests(run, count=8)
+        self._assert_dropped_requests(run)
+
+    @defer.inlineCallbacks
+    def test_crawler_itemerror(self):
+        run = CrawlerRun(ItemZeroDivisionErrorSpider)
+        yield run.run()
+        self._assert_items_error(run)
+
+    @defer.inlineCallbacks
+    def test_crawler_change_close_reason_on_idle(self):
+        run = CrawlerRun(ChangeCloseReasonSpider)
+        yield run.run()
+        self.assertEqual(
+            {"spider": run.spider, "reason": "custom_reason"},
+            run.signals_caught[signals.spider_closed],
+        )
+
     @defer.inlineCallbacks
     def test_close_downloader(self):
-        e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
+        e = ExecutionEngine(get_crawler(MySpider), lambda _: None)
         yield e.close()
 
     @defer.inlineCallbacks
     def test_start_already_running_exception(self):
-        e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-        yield e.open_spider(TestSpider(), [])
+        e = ExecutionEngine(get_crawler(MySpider), lambda _: None)
+        yield e.open_spider(MySpider(), [])
         e.start()
         try:
             yield self.assertFailure(e.start(), RuntimeError).addBoth(
@@ -435,90 +440,6 @@ class EngineTest(unittest.TestCase):
             )
         finally:
             yield e.stop()
-
-    @defer.inlineCallbacks
-    def test_close_spiders_downloader(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning,
-            match="ExecutionEngine.open_spiders is deprecated, "
-            "please use ExecutionEngine.spider instead",
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            yield e.open_spider(TestSpider(), [])
-            self.assertEqual(len(e.open_spiders), 1)
-            yield e.close()
-            self.assertEqual(len(e.open_spiders), 0)
-
-    @defer.inlineCallbacks
-    def test_close_engine_spiders_downloader(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning,
-            match="ExecutionEngine.open_spiders is deprecated, "
-            "please use ExecutionEngine.spider instead",
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            yield e.open_spider(TestSpider(), [])
-            e.start()
-            self.assertTrue(e.running)
-            yield e.close()
-            self.assertFalse(e.running)
-            self.assertEqual(len(e.open_spiders), 0)
-
-    @defer.inlineCallbacks
-    def test_crawl_deprecated_spider_arg(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning,
-            match="Passing a 'spider' argument to "
-            "ExecutionEngine.crawl is deprecated",
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            spider = TestSpider()
-            yield e.open_spider(spider, [])
-            e.start()
-            e.crawl(Request("data:,"), spider)
-            yield e.close()
-
-    @defer.inlineCallbacks
-    def test_download_deprecated_spider_arg(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning,
-            match="Passing a 'spider' argument to "
-            "ExecutionEngine.download is deprecated",
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            spider = TestSpider()
-            yield e.open_spider(spider, [])
-            e.start()
-            e.download(Request("data:,"), spider)
-            yield e.close()
-
-    @defer.inlineCallbacks
-    def test_deprecated_schedule(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning,
-            match="ExecutionEngine.schedule is deprecated, please use "
-            "ExecutionEngine.crawl or ExecutionEngine.download instead",
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            spider = TestSpider()
-            yield e.open_spider(spider, [])
-            e.start()
-            e.schedule(Request("data:,"), spider)
-            yield e.close()
-
-    @defer.inlineCallbacks
-    def test_deprecated_has_capacity(self):
-        with pytest.warns(
-            ScrapyDeprecationWarning, match="ExecutionEngine.has_capacity is deprecated"
-        ):
-            e = ExecutionEngine(get_crawler(TestSpider), lambda _: None)
-            self.assertTrue(e.has_capacity())
-            spider = TestSpider()
-            yield e.open_spider(spider, [])
-            self.assertFalse(e.has_capacity())
-            e.start()
-            yield e.close()
-            self.assertTrue(e.has_capacity())
 
     def test_short_timeout(self):
         args = (
@@ -540,7 +461,7 @@ class EngineTest(unittest.TestCase):
         def kill_proc():
             p.kill()
             p.communicate()
-            assert False, "Command took too much time to complete"
+            raise AssertionError("Command took too much time to complete")
 
         timer = Timer(15, kill_proc)
         try:
@@ -550,6 +471,37 @@ class EngineTest(unittest.TestCase):
             timer.cancel()
 
         self.assertNotIn(b"Traceback", stderr)
+
+
+def test_request_scheduled_signal(caplog):
+    class TestScheduler(BaseScheduler):
+        def __init__(self):
+            self.enqueued = []
+
+        def enqueue_request(self, request: Request) -> bool:
+            self.enqueued.append(request)
+            return True
+
+    def signal_handler(request: Request, spider: Spider) -> None:
+        if "drop" in request.url:
+            raise IgnoreRequest
+
+    spider = MySpider()
+    crawler = get_crawler(spider.__class__)
+    engine = ExecutionEngine(crawler, lambda _: None)
+    engine.downloader._slot_gc_loop.stop()
+    scheduler = TestScheduler()
+    engine.slot = Slot((), None, Mock(), scheduler)
+    crawler.signals.connect(signal_handler, request_scheduled)
+    keep_request = Request("https://keep.example")
+    engine._schedule_request(keep_request, spider)
+    drop_request = Request("https://drop.example")
+    caplog.set_level(DEBUG)
+    engine._schedule_request(drop_request, spider)
+    assert scheduler.enqueued == [keep_request], (
+        f"{scheduler.enqueued!r} != [{keep_request!r}]"
+    )
+    crawler.signals.disconnect(signal_handler, request_scheduled)
 
 
 if __name__ == "__main__":

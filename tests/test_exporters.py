@@ -7,12 +7,11 @@ import tempfile
 import unittest
 from datetime import datetime
 from io import BytesIO
-from warnings import catch_warnings, filterwarnings
+from typing import Any
 
 import lxml.etree
 from itemadapter import ItemAdapter
 
-from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.exporters import (
     BaseItemExporter,
     CsvItemExporter,
@@ -32,7 +31,7 @@ def custom_serializer(value):
     return str(int(value) + 2)
 
 
-class TestItem(Item):
+class MyItem(Item):
     name = Field()
     age = Field()
 
@@ -43,7 +42,7 @@ class CustomFieldItem(Item):
 
 
 @dataclasses.dataclass
-class TestDataClass:
+class MyDataClass:
     name: str
     age: int
 
@@ -55,8 +54,8 @@ class CustomFieldDataclass:
 
 
 class BaseItemExporterTest(unittest.TestCase):
-    item_class = TestItem
-    custom_field_item_class = CustomFieldItem
+    item_class: type = MyItem
+    custom_field_item_class: type = CustomFieldItem
 
     def setUp(self):
         self.i = self.item_class(name="John\xa3", age="22")
@@ -117,12 +116,14 @@ class BaseItemExporterTest(unittest.TestCase):
         )
 
         ie = self._get_exporter(fields_to_export=["name"], encoding="latin-1")
-        _, name = list(ie._get_serialized_fields(self.i))[0]
+        _, name = next(iter(ie._get_serialized_fields(self.i)))
         assert isinstance(name, str)
         self.assertEqual(name, "John\xa3")
 
         ie = self._get_exporter(fields_to_export={"name": "名稱"})
-        self.assertEqual(list(ie._get_serialized_fields(self.i)), [("名稱", "John\xa3")])
+        self.assertEqual(
+            list(ie._get_serialized_fields(self.i)), [("名稱", "John\xa3")]
+        )
 
     def test_field_custom_serializer(self):
         i = self.custom_field_item_class(name="John\xa3", age="22")
@@ -137,13 +138,13 @@ class BaseItemExporterTest(unittest.TestCase):
 
 
 class BaseItemExporterDataclassTest(BaseItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
 class PythonItemExporterTest(BaseItemExporterTest):
     def _get_exporter(self, **kwargs):
-        return PythonItemExporter(binary=False, **kwargs)
+        return PythonItemExporter(**kwargs)
 
     def test_invalid_option(self):
         with self.assertRaisesRegex(TypeError, "Unexpected options: invalid_option"):
@@ -151,7 +152,7 @@ class PythonItemExporterTest(BaseItemExporterTest):
 
     def test_nested_item(self):
         i1 = self.item_class(name="Joseph", age="22")
-        i2 = dict(name="Maria", age=i1)
+        i2 = {"name": "Maria", "age": i1}
         i3 = self.item_class(name="Jesus", age=i2)
         ie = self._get_exporter()
         exported = ie.export_item(i3)
@@ -184,7 +185,7 @@ class PythonItemExporterTest(BaseItemExporterTest):
 
     def test_export_item_dict_list(self):
         i1 = self.item_class(name="Joseph", age="22")
-        i2 = dict(name="Maria", age=[i1])
+        i2 = {"name": "Maria", "age": [i1]}
         i3 = self.item_class(name="Jesus", age=[i2])
         ie = self._get_exporter()
         exported = ie.export_item(i3)
@@ -198,14 +199,6 @@ class PythonItemExporterTest(BaseItemExporterTest):
         self.assertEqual(type(exported["age"][0]), dict)
         self.assertEqual(type(exported["age"][0]["age"][0]), dict)
 
-    def test_export_binary(self):
-        with catch_warnings():
-            filterwarnings("ignore", category=ScrapyDeprecationWarning)
-            exporter = PythonItemExporter(binary=True)
-            value = self.item_class(name="John\xa3", age="22")
-            expected = {b"name": b"John\xc2\xa3", b"age": b"22"}
-            self.assertEqual(expected, exporter.export_item(value))
-
     def test_nonstring_types_item(self):
         item = self._get_nonstring_types_item()
         ie = self._get_exporter()
@@ -214,7 +207,7 @@ class PythonItemExporterTest(BaseItemExporterTest):
 
 
 class PythonItemExporterDataclassTest(PythonItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -223,11 +216,13 @@ class PprintItemExporterTest(BaseItemExporterTest):
         return PprintItemExporter(self.output, **kwargs)
 
     def _check_output(self):
-        self._assert_expected_item(eval(self.output.getvalue()))
+        self._assert_expected_item(
+            eval(self.output.getvalue())  # pylint: disable=eval-used
+        )
 
 
 class PprintItemExporterDataclassTest(PprintItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -264,7 +259,7 @@ class PickleItemExporterTest(BaseItemExporterTest):
 
 
 class PickleItemExporterDataclassTest(PickleItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -291,7 +286,7 @@ class MarshalItemExporterTest(BaseItemExporterTest):
 
 
 class MarshalItemExporterDataclassTest(MarshalItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -380,7 +375,7 @@ class CsvItemExporterTest(BaseItemExporterTest):
 
     def test_join_multivalue_not_strings(self):
         self.assertExportResult(
-            item=dict(name="John", friends=[4, 8]),
+            item={"name": "John", "friends": [4, 8]},
             include_headers_line=False,
             expected='"[4, 8]",John\r\n',
         )
@@ -395,14 +390,14 @@ class CsvItemExporterTest(BaseItemExporterTest):
     def test_errors_default(self):
         with self.assertRaises(UnicodeEncodeError):
             self.assertExportResult(
-                item=dict(text="W\u0275\u200Brd"),
+                item={"text": "W\u0275\u200brd"},
                 expected=None,
                 encoding="windows-1251",
             )
 
     def test_errors_xmlcharrefreplace(self):
         self.assertExportResult(
-            item=dict(text="W\u0275\u200Brd"),
+            item={"text": "W\u0275\u200brd"},
             include_headers_line=False,
             expected="W&#629;&#8203;rd\r\n",
             encoding="windows-1251",
@@ -411,7 +406,7 @@ class CsvItemExporterTest(BaseItemExporterTest):
 
 
 class CsvItemExporterDataclassTest(CsvItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -462,8 +457,8 @@ class XmlItemExporterTest(BaseItemExporterTest):
         )
 
     def test_nested_item(self):
-        i1 = dict(name="foo\xa3hoo", age="22")
-        i2 = dict(name="bar", age=i1)
+        i1 = {"name": "foo\xa3hoo", "age": "22"}
+        i2 = {"name": "bar", "age": i1}
         i3 = self.item_class(name="buz", age=i2)
 
         self.assertExportResult(
@@ -485,8 +480,8 @@ class XmlItemExporterTest(BaseItemExporterTest):
         )
 
     def test_nested_list_item(self):
-        i1 = dict(name="foo")
-        i2 = dict(name="bar", v2={"egg": ["spam"]})
+        i1 = {"name": "foo"}
+        i2 = {"name": "bar", "v2": {"egg": ["spam"]}}
         i3 = self.item_class(name="buz", age=[i1, i2])
 
         self.assertExportResult(
@@ -522,12 +517,12 @@ class XmlItemExporterTest(BaseItemExporterTest):
 
 
 class XmlItemExporterDataclassTest(XmlItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
 class JsonLinesItemExporterTest(BaseItemExporterTest):
-    _expected_nested = {
+    _expected_nested: Any = {
         "name": "Jesus",
         "age": {"name": "Maria", "age": {"name": "Joseph", "age": "22"}},
     }
@@ -541,7 +536,7 @@ class JsonLinesItemExporterTest(BaseItemExporterTest):
 
     def test_nested_item(self):
         i1 = self.item_class(name="Joseph", age="22")
-        i2 = dict(name="Maria", age=i1)
+        i2 = {"name": "Maria", "age": i1}
         i3 = self.item_class(name="Jesus", age=i2)
         self.ie.start_exporting()
         self.ie.export_item(i3)
@@ -568,7 +563,7 @@ class JsonLinesItemExporterTest(BaseItemExporterTest):
 
 
 class JsonLinesItemExporterDataclassTest(JsonLinesItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
@@ -599,6 +594,20 @@ class JsonItemExporterTest(JsonLinesItemExporterTest):
     def test_two_dict_items(self):
         self.assertTwoItemsExported(ItemAdapter(self.i).asdict())
 
+    def test_two_items_with_failure_between(self):
+        i1 = MyItem(name="Joseph\xa3", age="22")
+        i2 = MyItem(
+            name="Maria", age=1j
+        )  # Invalid datetimes didn't consistently fail between Python versions
+        i3 = MyItem(name="Jesus", age="44")
+        self.ie.start_exporting()
+        self.ie.export_item(i1)
+        self.assertRaises(TypeError, self.ie.export_item, i2)
+        self.ie.export_item(i3)
+        self.ie.finish_exporting()
+        exported = json.loads(to_unicode(self.output.getvalue()))
+        self.assertEqual(exported, [dict(i1), dict(i3)])
+
     def test_nested_item(self):
         i1 = self.item_class(name="Joseph\xa3", age="22")
         i2 = self.item_class(name="Maria", age=i1)
@@ -615,9 +624,9 @@ class JsonItemExporterTest(JsonLinesItemExporterTest):
         self.assertEqual(exported, [expected])
 
     def test_nested_dict_item(self):
-        i1 = dict(name="Joseph\xa3", age="22")
+        i1 = {"name": "Joseph\xa3", "age": "22"}
         i2 = self.item_class(name="Maria", age=i1)
-        i3 = dict(name="Jesus", age=i2)
+        i3 = {"name": "Jesus", "age": i2}
         self.ie.start_exporting()
         self.ie.export_item(i3)
         self.ie.finish_exporting()
@@ -637,13 +646,31 @@ class JsonItemExporterTest(JsonLinesItemExporterTest):
         self.assertEqual(exported, [item])
 
 
+class JsonItemExporterToBytesTest(BaseItemExporterTest):
+    def _get_exporter(self, **kwargs):
+        kwargs["encoding"] = "latin"
+        return JsonItemExporter(self.output, **kwargs)
+
+    def test_two_items_with_failure_between(self):
+        i1 = MyItem(name="Joseph", age="22")
+        i2 = MyItem(name="\u263a", age="11")
+        i3 = MyItem(name="Jesus", age="44")
+        self.ie.start_exporting()
+        self.ie.export_item(i1)
+        self.assertRaises(UnicodeEncodeError, self.ie.export_item, i2)
+        self.ie.export_item(i3)
+        self.ie.finish_exporting()
+        exported = json.loads(to_unicode(self.output.getvalue(), encoding="latin"))
+        self.assertEqual(exported, [dict(i1), dict(i3)])
+
+
 class JsonItemExporterDataclassTest(JsonItemExporterTest):
-    item_class = TestDataClass
+    item_class = MyDataClass
     custom_field_item_class = CustomFieldDataclass
 
 
 class CustomExporterItemTest(unittest.TestCase):
-    item_class = TestItem
+    item_class: type = MyItem
 
     def setUp(self):
         if self.item_class is None:
@@ -673,8 +700,4 @@ class CustomExporterItemTest(unittest.TestCase):
 
 
 class CustomExporterDataclassTest(CustomExporterItemTest):
-    item_class = TestDataClass
-
-
-if __name__ == "__main__":
-    unittest.main()
+    item_class = MyDataClass

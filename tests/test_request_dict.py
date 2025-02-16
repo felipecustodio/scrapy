@@ -1,10 +1,6 @@
-import sys
 import unittest
-import warnings
-from contextlib import suppress
 
 from scrapy import Request, Spider
-from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.http import FormRequest, JsonRequest
 from scrapy.utils.request import request_from_dict
 
@@ -15,7 +11,7 @@ class CustomRequest(Request):
 
 class RequestSerializationTest(unittest.TestCase):
     def setUp(self):
-        self.spider = TestSpider()
+        self.spider = MethodsSpider()
 
     def test_basic(self):
         r = Request("http://www.example.com")
@@ -100,18 +96,22 @@ class RequestSerializationTest(unittest.TestCase):
     def test_private_reference_callback_serialization(self):
         r = Request(
             "http://www.example.com",
-            callback=self.spider._TestSpider__parse_item_reference,
-            errback=self.spider._TestSpider__handle_error_reference,
+            callback=self.spider._MethodsSpider__parse_item_reference,
+            errback=self.spider._MethodsSpider__handle_error_reference,
         )
         self._assert_serializes_ok(r, spider=self.spider)
         request_dict = r.to_dict(spider=self.spider)
-        self.assertEqual(request_dict["callback"], "_TestSpider__parse_item_reference")
-        self.assertEqual(request_dict["errback"], "_TestSpider__handle_error_reference")
+        self.assertEqual(
+            request_dict["callback"], "_MethodsSpider__parse_item_reference"
+        )
+        self.assertEqual(
+            request_dict["errback"], "_MethodsSpider__handle_error_reference"
+        )
 
     def test_private_callback_serialization(self):
         r = Request(
             "http://www.example.com",
-            callback=self.spider._TestSpider__parse_item_private,
+            callback=self.spider._MethodsSpider__parse_item_private,
             errback=self.spider.handle_error,
         )
         self._assert_serializes_ok(r, spider=self.spider)
@@ -119,7 +119,7 @@ class RequestSerializationTest(unittest.TestCase):
     def test_mixin_private_callback_serialization(self):
         r = Request(
             "http://www.example.com",
-            callback=self.spider._TestSpiderMixin__mixin_callback,
+            callback=self.spider._SpiderMixin__mixin_callback,
             errback=self.spider.handle_error,
         )
         self._assert_serializes_ok(r, spider=self.spider)
@@ -151,47 +151,23 @@ class RequestSerializationTest(unittest.TestCase):
 
         spider = MySpider()
         r = Request("http://www.example.com", callback=spider.parse)
-        setattr(spider, "parse", None)
+        spider.parse = None
         self.assertRaises(ValueError, r.to_dict, spider=spider)
 
     def test_callback_not_available(self):
         """Callback method is not available in the spider passed to from_dict"""
-        spider = TestSpiderDelegation()
+        spider = SpiderDelegation()
         r = Request("http://www.example.com", callback=spider.delegated_callback)
         d = r.to_dict(spider=spider)
         self.assertRaises(ValueError, request_from_dict, d, spider=Spider("foo"))
 
 
-class DeprecatedMethodsRequestSerializationTest(RequestSerializationTest):
-    def _assert_serializes_ok(self, request, spider=None):
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            with suppress(KeyError):
-                del sys.modules[
-                    "scrapy.utils.reqser"
-                ]  # delete module to reset the deprecation warning
-
-            from scrapy.utils.reqser import request_from_dict as _from_dict
-            from scrapy.utils.reqser import request_to_dict as _to_dict
-
-            request_copy = _from_dict(_to_dict(request, spider), spider)
-            self._assert_same_request(request, request_copy)
-
-            self.assertEqual(len(caught), 1)
-            self.assertTrue(issubclass(caught[0].category, ScrapyDeprecationWarning))
-            self.assertEqual(
-                "Module scrapy.utils.reqser is deprecated, please use request.to_dict method"
-                " and/or scrapy.utils.request.request_from_dict instead",
-                str(caught[0].message),
-            )
-
-
-class TestSpiderMixin:
-    def __mixin_callback(self, response):
+class SpiderMixin:
+    def __mixin_callback(self, response):  # pylint: disable=unused-private-member
         pass
 
 
-class TestSpiderDelegation:
+class SpiderDelegation:
     def delegated_callback(self, response):
         pass
 
@@ -212,15 +188,16 @@ def private_handle_error(failure):
     pass
 
 
-class TestSpider(Spider, TestSpiderMixin):
+class MethodsSpider(Spider, SpiderMixin):
     name = "test"
     parse_item_reference = parse_item
     handle_error_reference = handle_error
     __parse_item_reference = private_parse_item
     __handle_error_reference = private_handle_error
 
-    def __init__(self):
-        self.delegated_callback = TestSpiderDelegation().delegated_callback
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.delegated_callback = SpiderDelegation().delegated_callback
 
     def parse_item(self, response):
         pass
@@ -228,5 +205,5 @@ class TestSpider(Spider, TestSpiderMixin):
     def handle_error(self, failure):
         pass
 
-    def __parse_item_private(self, response):
+    def __parse_item_private(self, response):  # pylint: disable=unused-private-member
         pass

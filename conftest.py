@@ -14,13 +14,19 @@ def _py_files(folder):
 collect_ignore = [
     # not a test, but looks like a test
     "scrapy/utils/testsite.py",
+    "tests/ftpserver.py",
+    "tests/mockserver.py",
+    "tests/pipelines.py",
+    "tests/spiders.py",
     # contains scripts to be run by tests/test_crawler.py::CrawlerProcessSubprocess
     *_py_files("tests/CrawlerProcess"),
     # contains scripts to be run by tests/test_crawler.py::CrawlerRunnerSubprocess
     *_py_files("tests/CrawlerRunner"),
 ]
 
-with Path("tests/ignores.txt").open(encoding="utf-8") as reader:
+base_dir = Path(__file__).parent
+ignore_file_path = base_dir / "tests" / "ignores.txt"
+with ignore_file_path.open(encoding="utf-8") as reader:
     for line in reader:
         file_path = line.strip()
         if file_path and file_path[0] != "#":
@@ -35,7 +41,7 @@ if not H2_ENABLED:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def chdir(tmpdir):
     """Change to pytest-provided temporary directory"""
     tmpdir.chdir()
@@ -53,7 +59,7 @@ def pytest_addoption(parser):
 def reactor_pytest(request):
     if not request.cls:
         # doctests
-        return
+        return None
     request.cls.reactor_pytest = request.config.getoption("--reactor")
     return request.cls.reactor_pytest
 
@@ -71,6 +77,42 @@ def only_not_asyncio(request, reactor_pytest):
         and reactor_pytest == "asyncio"
     ):
         pytest.skip("This test is only run without --reactor=asyncio")
+
+
+@pytest.fixture(autouse=True)
+def requires_uvloop(request):
+    if not request.node.get_closest_marker("requires_uvloop"):
+        return
+    try:
+        import uvloop
+
+        del uvloop
+    except ImportError:
+        pytest.skip("uvloop is not installed")
+
+
+@pytest.fixture(autouse=True)
+def requires_botocore(request):
+    if not request.node.get_closest_marker("requires_botocore"):
+        return
+    try:
+        import botocore
+
+        del botocore
+    except ImportError:
+        pytest.skip("botocore is not installed")
+
+
+@pytest.fixture(autouse=True)
+def requires_boto3(request):
+    if not request.node.get_closest_marker("requires_boto3"):
+        return
+    try:
+        import boto3
+
+        del boto3
+    except ImportError:
+        pytest.skip("boto3 is not installed")
 
 
 def pytest_configure(config):

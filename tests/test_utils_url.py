@@ -1,10 +1,14 @@
 import unittest
+import warnings
+
+import pytest
 
 from scrapy.linkextractors import IGNORED_EXTENSIONS
 from scrapy.spiders import Spider
 from scrapy.utils.misc import arg_to_iter
-from scrapy.utils.url import (
+from scrapy.utils.url import (  # type: ignore[attr-defined]
     _is_filesystem_path,
+    _public_w3lib_objects,
     add_http_if_no_scheme,
     guess_scheme,
     strip_url,
@@ -12,8 +16,6 @@ from scrapy.utils.url import (
     url_is_from_any_domain,
     url_is_from_spider,
 )
-
-__doctests__ = ["scrapy.utils.url"]
 
 
 class UrlUtilsTest(unittest.TestCase):
@@ -317,9 +319,9 @@ class GuessSchemeTest(unittest.TestCase):
 def create_guess_scheme_t(args):
     def do_expected(self):
         url = guess_scheme(args[0])
-        assert url.startswith(
-            args[1]
-        ), f"Wrong scheme guessed: for `{args[0]}` got `{url}`, expected `{args[1]}...`"
+        assert url.startswith(args[1]), (
+            f"Wrong scheme guessed: for `{args[0]}` got `{url}`, expected `{args[1]}...`"
+        )
 
     return do_expected
 
@@ -327,8 +329,6 @@ def create_guess_scheme_t(args):
 def create_skipped_scheme_t(args):
     def do_expected(self):
         raise unittest.SkipTest(args[2])
-        url = guess_scheme(args[0])
-        assert url.startswith(args[1])
 
     return do_expected
 
@@ -364,7 +364,7 @@ for k, args in enumerate(
     setattr(GuessSchemeTest, t_method.__name__, t_method)
 
 # TODO: the following tests do not pass with current implementation
-for k, args in enumerate(
+for k, skip_args in enumerate(
     [
         (
             r"C:\absolute\path\to\a\file.html",
@@ -374,7 +374,7 @@ for k, args in enumerate(
     ],
     start=1,
 ):
-    t_method = create_skipped_scheme_t(args)
+    t_method = create_skipped_scheme_t(skip_args)
     t_method.__name__ = f"test_uri_skipped_{k:03}"
     setattr(GuessSchemeTest, t_method.__name__, t_method)
 
@@ -609,5 +609,22 @@ class IsPathTestCase(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize(
+    "obj_name",
+    [
+        "_unquotepath",
+        "_safe_chars",
+        "parse_url",
+        *_public_w3lib_objects,
+    ],
+)
+def test_deprecated_imports_from_w3lib(obj_name):
+    with warnings.catch_warnings(record=True) as warns:
+        obj_type = "attribute" if obj_name == "_safe_chars" else "function"
+        message = f"The scrapy.utils.url.{obj_name} {obj_type} is deprecated, use w3lib.url.{obj_name} instead."
+
+        from importlib import import_module
+
+        getattr(import_module("scrapy.utils.url"), obj_name)
+
+        assert message in warns[0].message.args

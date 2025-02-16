@@ -4,11 +4,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from warnings import catch_warnings
 
 from testfixtures import LogCapture
 
 from scrapy.core.scheduler import Scheduler
-from scrapy.dupefilters import RFPDupeFilter
+from scrapy.dupefilters import BaseDupeFilter, RFPDupeFilter
+from scrapy.exceptions import ScrapyDeprecationWarning
 from scrapy.http import Request
 from scrapy.utils.python import to_bytes
 from scrapy.utils.test import get_crawler
@@ -33,14 +35,6 @@ class FromCrawlerRFPDupeFilter(RFPDupeFilter):
         return df
 
 
-class FromSettingsRFPDupeFilter(RFPDupeFilter):
-    @classmethod
-    def from_settings(cls, settings, *, fingerprinter=None):
-        df = super().from_settings(settings, fingerprinter=fingerprinter)
-        df.method = "from_settings"
-        return df
-
-
 class DirectDupeFilter:
     method = "n/a"
 
@@ -50,28 +44,15 @@ class RFPDupeFilterTest(unittest.TestCase):
         settings = {
             "DUPEFILTER_DEBUG": True,
             "DUPEFILTER_CLASS": FromCrawlerRFPDupeFilter,
-            "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
         }
         crawler = get_crawler(settings_dict=settings)
         scheduler = Scheduler.from_crawler(crawler)
         self.assertTrue(scheduler.df.debug)
         self.assertEqual(scheduler.df.method, "from_crawler")
 
-    def test_df_from_settings_scheduler(self):
-        settings = {
-            "DUPEFILTER_DEBUG": True,
-            "DUPEFILTER_CLASS": FromSettingsRFPDupeFilter,
-            "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
-        }
-        crawler = get_crawler(settings_dict=settings)
-        scheduler = Scheduler.from_crawler(crawler)
-        self.assertTrue(scheduler.df.debug)
-        self.assertEqual(scheduler.df.method, "from_settings")
-
     def test_df_direct_scheduler(self):
         settings = {
             "DUPEFILTER_CLASS": DirectDupeFilter,
-            "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
         }
         crawler = get_crawler(settings_dict=settings)
         scheduler = Scheduler.from_crawler(crawler)
@@ -146,7 +127,7 @@ class RFPDupeFilterTest(unittest.TestCase):
         case_insensitive_dupefilter.close("finished")
 
     def test_seenreq_newlines(self):
-        """Checks against adding duplicate \r to
+        r"""Checks against adding duplicate \r to
         line endings on Windows platforms."""
 
         r1 = Request("http://scrapytest.org/1")
@@ -176,7 +157,6 @@ class RFPDupeFilterTest(unittest.TestCase):
             settings = {
                 "DUPEFILTER_DEBUG": False,
                 "DUPEFILTER_CLASS": FromCrawlerRFPDupeFilter,
-                "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
             }
             crawler = get_crawler(SimpleSpider, settings_dict=settings)
             spider = SimpleSpider.from_crawler(crawler)
@@ -205,7 +185,6 @@ class RFPDupeFilterTest(unittest.TestCase):
             settings = {
                 "DUPEFILTER_DEBUG": True,
                 "DUPEFILTER_CLASS": FromCrawlerRFPDupeFilter,
-                "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
             }
             crawler = get_crawler(SimpleSpider, settings_dict=settings)
             spider = SimpleSpider.from_crawler(crawler)
@@ -243,7 +222,6 @@ class RFPDupeFilterTest(unittest.TestCase):
         with LogCapture() as log:
             settings = {
                 "DUPEFILTER_DEBUG": True,
-                "REQUEST_FINGERPRINTER_IMPLEMENTATION": "2.7",
             }
             crawler = get_crawler(SimpleSpider, settings_dict=settings)
             spider = SimpleSpider.from_crawler(crawler)
@@ -276,3 +254,18 @@ class RFPDupeFilterTest(unittest.TestCase):
             )
 
             dupefilter.close("finished")
+
+
+class BaseDupeFilterTestCase(unittest.TestCase):
+    def test_log_deprecation(self):
+        dupefilter = _get_dupefilter(
+            settings={"DUPEFILTER_CLASS": BaseDupeFilter},
+        )
+        with catch_warnings(record=True) as warning_list:
+            dupefilter.log(None, None)
+        self.assertEqual(len(warning_list), 1)
+        self.assertEqual(
+            str(warning_list[0].message),
+            "Calling BaseDupeFilter.log() is deprecated.",
+        )
+        self.assertEqual(warning_list[0].category, ScrapyDeprecationWarning)

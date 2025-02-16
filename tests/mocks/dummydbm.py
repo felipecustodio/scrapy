@@ -1,5 +1,7 @@
 """DBM-like dummy module"""
-import collections
+
+from collections import defaultdict
+from typing import Any
 
 
 class DummyDB(dict):
@@ -12,7 +14,7 @@ class DummyDB(dict):
 error = KeyError
 
 
-_DATABASES = collections.defaultdict(DummyDB)
+_DATABASES: defaultdict[Any, DummyDB] = defaultdict(DummyDB)
 
 
 def open(file, flag="r", mode=0o666):

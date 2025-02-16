@@ -3,8 +3,10 @@ import time
 from twisted.internet import defer
 from twisted.trial.unittest import TestCase
 
+from scrapy import Request
+from scrapy.core.downloader import Downloader, Slot
 from scrapy.crawler import CrawlerRunner
-from scrapy.http import Request
+from scrapy.utils.test import get_crawler
 from tests.mockserver import MockServer
 from tests.spiders import MetaSpider
 
@@ -20,6 +22,7 @@ class DownloaderSlotsSettingsTestSpider(MetaSpider):
                 "concurrency": 1,
                 "delay": 2,
                 "randomize_delay": False,
+                "throttle": False,
             },
             "books.toscrape.com": {"delay": 3, "randomize_delay": False},
         },
@@ -28,7 +31,7 @@ class DownloaderSlotsSettingsTestSpider(MetaSpider):
     def start_requests(self):
         self.times = {None: []}
 
-        slots = list(self.custom_settings.get("DOWNLOAD_SLOTS", {}).keys()) + [None]
+        slots = [*self.custom_settings.get("DOWNLOAD_SLOTS", {}), None]
 
         for slot in slots:
             url = self.mockserver.url(f"/?downloader_slot={slot}")
@@ -47,13 +50,17 @@ class DownloaderSlotsSettingsTestSpider(MetaSpider):
 
 
 class CrawlTestCase(TestCase):
-    def setUp(self):
-        self.mockserver = MockServer()
-        self.mockserver.__enter__()
-        self.runner = CrawlerRunner()
+    @classmethod
+    def setUpClass(cls):
+        cls.mockserver = MockServer()
+        cls.mockserver.__enter__()
 
-    def tearDown(self):
-        self.mockserver.__exit__(None, None, None)
+    @classmethod
+    def tearDownClass(cls):
+        cls.mockserver.__exit__(None, None, None)
+
+    def setUp(self):
+        self.runner = CrawlerRunner()
 
     @defer.inlineCallbacks
     def test_delay(self):
@@ -70,3 +77,26 @@ class CrawlTestCase(TestCase):
         }
 
         self.assertTrue(max(list(error_delta.values())) < tolerance)
+
+
+def test_params():
+    params = {
+        "concurrency": 1,
+        "delay": 2,
+        "randomize_delay": False,
+    }
+    settings = {
+        "DOWNLOAD_SLOTS": {
+            "example.com": params,
+        },
+    }
+    crawler = get_crawler(settings_dict=settings)
+    downloader = Downloader(crawler)
+    downloader._slot_gc_loop.stop()  # Prevent an unclean reactor.
+    request = Request("https://example.com")
+    _, actual = downloader._get_slot(request, spider=None)
+    expected = Slot(**params)
+    for param in params:
+        assert getattr(expected, param) == getattr(actual, param), (
+            f"Slot.{param}: {getattr(expected, param)!r} != {getattr(actual, param)!r}"
+        )

@@ -1,6 +1,6 @@
 import shutil
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
+from tempfile import mkdtemp
 
 from twisted.trial import unittest
 
@@ -12,11 +12,10 @@ from scrapy.utils.test import get_crawler
 
 class SpiderStateTest(unittest.TestCase):
     def test_store_load(self):
-        jobdir = self.mktemp()
-        Path(jobdir).mkdir()
+        jobdir = mkdtemp()
         try:
             spider = Spider(name="default")
-            dt = datetime.now()
+            dt = datetime.now(tz=timezone.utc)
 
             ss = SpiderState(jobdir)
             ss.spider_opened(spider)

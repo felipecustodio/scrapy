@@ -2,7 +2,7 @@ from twisted.trial import unittest
 
 from scrapy.exceptions import NotConfigured
 from scrapy.middleware import MiddlewareManager
-from scrapy.settings import Settings
+from scrapy.utils.test import get_crawler
 
 
 class M1:
@@ -23,8 +23,6 @@ class M2:
     def close_spider(self, spider):
         pass
 
-    pass
-
 
 class M3:
     def process(self, response, request, spider):
@@ -39,10 +37,10 @@ class MOff:
         pass
 
     def __init__(self):
-        raise NotConfigured
+        raise NotConfigured("foo")
 
 
-class TestMiddlewareManager(MiddlewareManager):
+class MyMiddlewareManager(MiddlewareManager):
     @classmethod
     def _get_mwlist_from_settings(cls, settings):
         return [M1, MOff, M3]
@@ -56,7 +54,7 @@ class TestMiddlewareManager(MiddlewareManager):
 class MiddlewareManagerTest(unittest.TestCase):
     def test_init(self):
         m1, m2, m3 = M1(), M2(), M3()
-        mwman = TestMiddlewareManager(m1, m2, m3)
+        mwman = MyMiddlewareManager(m1, m2, m3)
         self.assertEqual(
             list(mwman.methods["open_spider"]), [m1.open_spider, m2.open_spider]
         )
@@ -66,7 +64,7 @@ class MiddlewareManagerTest(unittest.TestCase):
         self.assertEqual(list(mwman.methods["process"]), [m1.process, m3.process])
 
     def test_methods(self):
-        mwman = TestMiddlewareManager(M1(), M2(), M3())
+        mwman = MyMiddlewareManager(M1(), M2(), M3())
         self.assertEqual(
             [x.__self__.__class__ for x in mwman.methods["open_spider"]], [M1, M2]
         )
@@ -83,7 +81,7 @@ class MiddlewareManagerTest(unittest.TestCase):
         self.assertEqual(mwman.middlewares, (m1, m2, m3))
 
     def test_enabled_from_settings(self):
-        settings = Settings()
-        mwman = TestMiddlewareManager.from_settings(settings)
+        crawler = get_crawler()
+        mwman = MyMiddlewareManager.from_crawler(crawler)
         classes = [x.__class__ for x in mwman.middlewares]
         self.assertEqual(classes, [M1, M3])

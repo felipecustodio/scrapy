@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import warnings
 from importlib import import_module
@@ -11,7 +13,7 @@ ENVVAR = "SCRAPY_SETTINGS_MODULE"
 DATADIR_CFG_SECTION = "datadir"
 
 
-def inside_project():
+def inside_project() -> bool:
     scrapy_module = os.environ.get(ENVVAR)
     if scrapy_module:
         try:
@@ -25,7 +27,7 @@ def inside_project():
     return bool(closest_scrapy_cfg())
 
 
-def project_data_dir(project="default") -> str:
+def project_data_dir(project: str = "default") -> str:
     """Return the current project data dir, creating it if it doesn't exist"""
     if not inside_project():
         raise NotConfigured("Not inside a project")
@@ -44,7 +46,7 @@ def project_data_dir(project="default") -> str:
     return str(d)
 
 
-def data_path(path: str, createdir=False) -> str:
+def data_path(path: str | os.PathLike[str], createdir: bool = False) -> str:
     """
     Return the given path joined with the .scrapy data directory.
     If given an absolute path, return it unmodified.
@@ -60,7 +62,7 @@ def data_path(path: str, createdir=False) -> str:
     return str(path_obj)
 
 
-def get_project_settings():
+def get_project_settings() -> Settings:
     if ENVVAR not in os.environ:
         project = os.environ.get("SCRAPY_PROJECT", "default")
         init_env(project)
